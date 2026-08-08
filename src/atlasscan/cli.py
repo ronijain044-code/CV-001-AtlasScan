@@ -16,6 +16,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
+from src.atlasscan.banner import grab_banner
 from src.atlasscan.scanner import scan_port
 from src.atlasscan.utils import parse_ports
 
@@ -80,11 +81,51 @@ def scan_with_progress(
     return sorted(open_ports)
 
 
+def collect_banners(
+    target: str,
+    open_ports: list[int],
+    timeout: float = 2.0,
+    workers: int = 20,
+) -> dict[int, str | None]:
+    """
+    Collect banners from discovered open ports.
+    """
+
+    if not open_ports:
+        return {}
+
+    workers = max(1, min(workers, len(open_ports)))
+
+    results = {}
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(
+                grab_banner,
+                target,
+                port,
+                timeout,
+            ): port
+            for port in open_ports
+        }
+
+        for future in as_completed(futures):
+            port = futures[future]
+
+            try:
+                results[port] = future.result()
+            except Exception:
+                results[port] = None
+
+    return dict(sorted(results.items()))
+
+
 def save_json_report(
     filename: str,
     target: str,
     ports: list[int],
     open_ports: list[int],
+    banners: dict[int, str | None],
     workers: int,
     timeout: float,
     elapsed: float,
@@ -101,6 +142,10 @@ def save_json_report(
             "ports_scanned": len(ports),
             "open_ports": open_ports,
             "open_port_count": len(open_ports),
+            "banners": {
+                str(port): banner
+                for port, banner in banners.items()
+            },
             "workers": workers,
             "timeout": timeout,
             "duration_seconds": round(elapsed, 4),
@@ -191,21 +236,46 @@ def main():
 
     elapsed = time.perf_counter() - start_time
 
+    banners = collect_banners(
+        args.target,
+        open_ports,
+    )
+
     table = Table(title="Open Ports")
 
     table.add_column("Port", justify="center")
     table.add_column("Status", justify="center")
+    table.add_column("Banner", overflow="fold")
 
     if open_ports:
         for port in open_ports:
+            service_banner = banners.get(port)
+
+            if service_banner:
+                service_banner = service_banner.replace(
+                    "\r",
+                    " ",
+                ).replace(
+                    "\n",
+                    " ",
+                )
+
+                if len(service_banner) > 80:
+                    service_banner = service_banner[:77] + "..."
+
+            else:
+                service_banner = "No banner"
+
             table.add_row(
                 str(port),
                 "[green]OPEN[/green]",
+                service_banner,
             )
     else:
         table.add_row(
             "-",
             "[red]No Open Ports Found[/red]",
+            "-",
         )
 
     console.print()
@@ -222,6 +292,7 @@ def main():
             target=args.target,
             ports=ports,
             open_ports=open_ports,
+            banners=banners,
             workers=args.workers,
             timeout=args.timeout,
             elapsed=elapsed,

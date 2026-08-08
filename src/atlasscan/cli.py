@@ -20,6 +20,7 @@ from src.atlasscan.banner import grab_banner
 from src.atlasscan.http import inspect_http
 from src.atlasscan.scanner import scan_port
 from src.atlasscan.service import identify_service
+from src.atlasscan.technology import fingerprint_technology
 from src.atlasscan.utils import parse_ports
 
 console = Console()
@@ -149,6 +150,7 @@ def build_service_results(
 def collect_http_details(
     target: str,
     open_ports: list[int],
+    banners: dict[int, str | None],
 ) -> dict[int, dict[str, str | int | None]]:
     """
     Collect HTTP metadata from ports identified as HTTP services.
@@ -157,12 +159,12 @@ def collect_http_details(
     http_ports = []
 
     for port in open_ports:
-        service = identify_service(
+        service_info = identify_service(
             port,
-            None,
-        )["service"]
+            banners.get(port),
+        )
 
-        if service in {"http", "https"}:
+        if service_info["service"] in {"http", "https"}:
             http_ports.append(port)
 
     if not http_ports:
@@ -193,6 +195,31 @@ def collect_http_details(
     return dict(sorted(results.items()))
 
 
+def build_technology_results(
+    open_ports: list[int],
+    banners: dict[int, str | None],
+    services: dict[int, dict[str, str]],
+    http_details: dict[int, dict[str, str | int | None]],
+) -> dict[int, list[dict[str, str]]]:
+    """
+    Fingerprint technologies for discovered services.
+    """
+
+    results = {}
+
+    for port in open_ports:
+        service_info = services[port]
+
+        results[port] = fingerprint_technology(
+            service=service_info["service"],
+            version=service_info["version"],
+            banner=banners.get(port),
+            http_details=http_details.get(port),
+        )
+
+    return results
+
+
 def save_json_report(
     filename: str,
     target: str,
@@ -201,6 +228,7 @@ def save_json_report(
     banners: dict[int, str | None],
     services: dict[int, dict[str, str]],
     http_details: dict[int, dict[str, str | int | None]],
+    technologies: dict[int, list[dict[str, str]]],
     workers: int,
     timeout: float,
     elapsed: float,
@@ -228,6 +256,10 @@ def save_json_report(
             "http": {
                 str(port): details
                 for port, details in http_details.items()
+            },
+            "technologies": {
+                str(port): techs
+                for port, techs in technologies.items()
             },
             "workers": workers,
             "timeout": timeout,
@@ -330,6 +362,14 @@ def main():
     http_details = collect_http_details(
         args.target,
         open_ports,
+        banners,
+    )
+
+    technologies = build_technology_results(
+        open_ports,
+        banners,
+        services,
+        http_details,
     )
 
     elapsed = time.perf_counter() - start_time
@@ -340,7 +380,7 @@ def main():
     table.add_column("Status", justify="center")
     table.add_column("Service", justify="center")
     table.add_column("Version", justify="center")
-    table.add_column("Banner", overflow="fold")
+    table.add_column("Technologies", overflow="fold")
 
     if open_ports:
         for port in open_ports:
@@ -349,28 +389,23 @@ def main():
             service = service_info["service"]
             version = service_info["version"]
 
-            service_banner = banners.get(port)
+            tech_names = [
+                tech["name"]
+                for tech in technologies.get(port, [])
+            ]
 
-            if service_banner:
-                service_banner = service_banner.replace(
-                    "\r",
-                    " ",
-                ).replace(
-                    "\n",
-                    " ",
-                )
-
-                if len(service_banner) > 60:
-                    service_banner = service_banner[:57] + "..."
-            else:
-                service_banner = "No banner"
+            technology_text = (
+                ", ".join(tech_names)
+                if tech_names
+                else "Unknown"
+            )
 
             table.add_row(
                 str(port),
                 "[green]OPEN[/green]",
                 service,
                 version,
-                service_banner,
+                technology_text,
             )
     else:
         table.add_row(
@@ -419,6 +454,7 @@ def main():
             banners=banners,
             services=services,
             http_details=http_details,
+            technologies=technologies,
             workers=args.workers,
             timeout=args.timeout,
             elapsed=elapsed,

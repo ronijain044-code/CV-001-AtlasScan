@@ -4,6 +4,7 @@ from src.atlasscan.banner import grab_banner
 from src.atlasscan.http import inspect_http
 from src.atlasscan.scanner import scan_port, scan_ports
 from src.atlasscan.service import identify_service
+from src.atlasscan.technology import fingerprint_technology
 
 
 def test_returns_boolean():
@@ -52,6 +53,22 @@ def test_json_report_structure(tmp_path):
                     "allow": None,
                 }
             },
+            "technologies": {
+                "22": [
+                    {
+                        "name": "OpenSSH 6.6.1p1",
+                        "category": "remote-access",
+                        "detected_from": "banner",
+                    }
+                ],
+                "80": [
+                    {
+                        "name": "Apache 2.4.7",
+                        "category": "web-server",
+                        "detected_from": "banner",
+                    }
+                ],
+            },
             "workers": 100,
             "timeout": 1.0,
             "duration_seconds": 0.5,
@@ -76,6 +93,7 @@ def test_json_report_structure(tmp_path):
     assert data["atlas_scan"]["services"]["22"]["service"] == "ssh"
     assert data["atlas_scan"]["services"]["80"]["service"] == "http"
     assert data["atlas_scan"]["http"]["80"]["status_code"] == 200
+    assert data["atlas_scan"]["technologies"]["22"][0]["name"] == "OpenSSH 6.6.1p1"
 
 
 def test_banner_grabber_returns_string_or_none():
@@ -134,3 +152,47 @@ def test_http_inspection_returns_expected_structure():
         result["status_code"],
         int,
     )
+
+
+def test_ssh_technology_fingerprint():
+    result = fingerprint_technology(
+        "ssh",
+        "6.6.1p1",
+        "SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.13",
+    )
+
+    assert result
+    assert result[0]["name"] == "OpenSSH 6.6.1p1"
+    assert result[0]["category"] == "remote-access"
+
+
+def test_http_technology_fingerprint():
+    result = fingerprint_technology(
+        "http",
+        "2.4.7",
+        "HTTP/1.1 200 OK",
+        {
+            "status_code": 200,
+            "server": "Apache/2.4.7 (Ubuntu)",
+            "content_type": "text/html",
+            "content_length": None,
+            "allow": None,
+        },
+    )
+
+    assert result
+    assert any(
+        tech["name"] == "Apache 2.4.7"
+        for tech in result
+    )
+
+
+def test_unknown_technology_returns_empty_list():
+    result = fingerprint_technology(
+        "unknown",
+        None,
+        None,
+        None,
+    )
+
+    assert result == []

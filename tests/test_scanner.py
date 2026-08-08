@@ -1,6 +1,7 @@
 import json
 
 from src.atlasscan.banner import grab_banner
+from src.atlasscan.http import inspect_http
 from src.atlasscan.scanner import scan_port, scan_ports
 from src.atlasscan.service import identify_service
 
@@ -42,6 +43,15 @@ def test_json_report_structure(tmp_path):
                     "version": "2.4.7",
                 },
             },
+            "http": {
+                "80": {
+                    "status_code": 200,
+                    "server": "Apache/2.4.7 (Ubuntu)",
+                    "content_type": "text/html",
+                    "content_length": None,
+                    "allow": None,
+                }
+            },
             "workers": 100,
             "timeout": 1.0,
             "duration_seconds": 0.5,
@@ -65,6 +75,7 @@ def test_json_report_structure(tmp_path):
     assert data["atlas_scan"]["banners"]["22"].startswith("SSH")
     assert data["atlas_scan"]["services"]["22"]["service"] == "ssh"
     assert data["atlas_scan"]["services"]["80"]["service"] == "http"
+    assert data["atlas_scan"]["http"]["80"]["status_code"] == 200
 
 
 def test_banner_grabber_returns_string_or_none():
@@ -102,3 +113,24 @@ def test_port_based_service_identification():
 
     assert result["service"] == "ftp"
     assert result["version"] == "unknown"
+
+
+def test_http_inspection_returns_expected_structure():
+    result = inspect_http(
+        "scanme.nmap.org",
+        80,
+    )
+
+    expected_keys = {
+        "status_code",
+        "server",
+        "content_type",
+        "content_length",
+        "allow",
+    }
+
+    assert set(result.keys()) == expected_keys
+    assert result["status_code"] is None or isinstance(
+        result["status_code"],
+        int,
+    )

@@ -17,6 +17,7 @@ from rich.progress import (
 from rich.table import Table
 
 from src.atlasscan.banner import grab_banner
+from src.atlasscan.http import inspect_http
 from src.atlasscan.scanner import scan_port
 from src.atlasscan.service import identify_service
 from src.atlasscan.utils import parse_ports
@@ -145,6 +146,53 @@ def build_service_results(
     return results
 
 
+def collect_http_details(
+    target: str,
+    open_ports: list[int],
+) -> dict[int, dict[str, str | int | None]]:
+    """
+    Collect HTTP metadata from ports identified as HTTP services.
+    """
+
+    http_ports = []
+
+    for port in open_ports:
+        service = identify_service(
+            port,
+            None,
+        )["service"]
+
+        if service in {"http", "https"}:
+            http_ports.append(port)
+
+    if not http_ports:
+        return {}
+
+    results = {}
+
+    with ThreadPoolExecutor(
+        max_workers=min(10, len(http_ports))
+    ) as executor:
+        futures = {
+            executor.submit(
+                inspect_http,
+                target,
+                port,
+            ): port
+            for port in http_ports
+        }
+
+        for future in as_completed(futures):
+            port = futures[future]
+
+            try:
+                results[port] = future.result()
+            except Exception:
+                results[port] = {}
+
+    return dict(sorted(results.items()))
+
+
 def save_json_report(
     filename: str,
     target: str,
@@ -152,6 +200,7 @@ def save_json_report(
     open_ports: list[int],
     banners: dict[int, str | None],
     services: dict[int, dict[str, str]],
+    http_details: dict[int, dict[str, str | int | None]],
     workers: int,
     timeout: float,
     elapsed: float,
@@ -175,6 +224,10 @@ def save_json_report(
             "banners": {
                 str(port): banner
                 for port, banner in banners.items()
+            },
+            "http": {
+                str(port): details
+                for port, details in http_details.items()
             },
             "workers": workers,
             "timeout": timeout,
@@ -274,6 +327,11 @@ def main():
         banners,
     )
 
+    http_details = collect_http_details(
+        args.target,
+        open_ports,
+    )
+
     elapsed = time.perf_counter() - start_time
 
     table = Table(title="Open Ports")
@@ -326,6 +384,27 @@ def main():
     console.print()
     console.print(table)
 
+    if http_details:
+        http_table = Table(title="HTTP Details")
+
+        http_table.add_column("Port", justify="center")
+        http_table.add_column("Status", justify="center")
+        http_table.add_column("Server")
+        http_table.add_column("Content-Type")
+        http_table.add_column("Content-Length")
+
+        for port, details in http_details.items():
+            http_table.add_row(
+                str(port),
+                str(details.get("status_code") or "Unknown"),
+                str(details.get("server") or "Unknown"),
+                str(details.get("content_type") or "Unknown"),
+                str(details.get("content_length") or "Unknown"),
+            )
+
+        console.print()
+        console.print(http_table)
+
     console.print(
         f"\n[bold green]Scan completed in "
         f"{elapsed:.2f} seconds[/bold green]"
@@ -339,6 +418,7 @@ def main():
             open_ports=open_ports,
             banners=banners,
             services=services,
+            http_details=http_details,
             workers=args.workers,
             timeout=args.timeout,
             elapsed=elapsed,

@@ -2,6 +2,7 @@ import json
 
 from src.atlasscan.banner import grab_banner
 from src.atlasscan.scanner import scan_port, scan_ports
+from src.atlasscan.service import identify_service
 
 
 def test_returns_boolean():
@@ -31,6 +32,16 @@ def test_json_report_structure(tmp_path):
                 "22": "SSH-2.0-OpenSSH",
                 "80": "HTTP/1.1 200 OK",
             },
+            "services": {
+                "22": {
+                    "service": "ssh",
+                    "version": "6.6.1p1",
+                },
+                "80": {
+                    "service": "http",
+                    "version": "2.4.7",
+                },
+            },
             "workers": 100,
             "timeout": 1.0,
             "duration_seconds": 0.5,
@@ -52,6 +63,8 @@ def test_json_report_structure(tmp_path):
     assert data["atlas_scan"]["target"] == "scanme.nmap.org"
     assert data["atlas_scan"]["open_ports"] == [22, 80]
     assert data["atlas_scan"]["banners"]["22"].startswith("SSH")
+    assert data["atlas_scan"]["services"]["22"]["service"] == "ssh"
+    assert data["atlas_scan"]["services"]["80"]["service"] == "http"
 
 
 def test_banner_grabber_returns_string_or_none():
@@ -61,3 +74,31 @@ def test_banner_grabber_returns_string_or_none():
     )
 
     assert result is None or isinstance(result, str)
+
+
+def test_ssh_service_identification():
+    result = identify_service(
+        22,
+        "SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.13",
+    )
+
+    assert result["service"] == "ssh"
+    assert result["version"] == "6.6.1p1"
+
+
+def test_http_service_identification():
+    result = identify_service(
+        80,
+        "HTTP/1.1 200 OK\r\n"
+        "Server: Apache/2.4.7 (Ubuntu)",
+    )
+
+    assert result["service"] == "http"
+    assert result["version"] == "2.4.7"
+
+
+def test_port_based_service_identification():
+    result = identify_service(21, None)
+
+    assert result["service"] == "ftp"
+    assert result["version"] == "unknown"

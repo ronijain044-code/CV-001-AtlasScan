@@ -18,6 +18,7 @@ from rich.table import Table
 
 from src.atlasscan.banner import grab_banner
 from src.atlasscan.http import inspect_http
+from src.atlasscan.report import generate_html_report
 from src.atlasscan.scanner import scan_port
 from src.atlasscan.service import identify_service
 from src.atlasscan.technology import fingerprint_technology
@@ -316,6 +317,12 @@ def main():
         help="Save scan results to a JSON file",
     )
 
+    parser.add_argument(
+        "--html",
+        metavar="FILE",
+        help="Save scan results to an HTML report",
+    )
+
     args = parser.parse_args()
 
     if args.timeout <= 0:
@@ -463,6 +470,24 @@ def main():
         console.print(
             f"[bold green]JSON report saved:[/bold green] "
             f"{args.json}"
+        )
+
+    if args.html:
+        generate_html_report(
+            filename=args.html,
+            target=args.target,
+            ports_scanned=len(ports),
+            open_ports=open_ports,
+            services=services,
+            banners=banners,
+            http_details=http_details,
+            technologies=technologies,
+            duration=elapsed,
+        )
+
+        console.print(
+            f"[bold green]HTML report saved:[/bold green] "
+            f"{args.html}"
         )
 
 

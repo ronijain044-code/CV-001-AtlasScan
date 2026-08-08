@@ -2,6 +2,7 @@ import json
 
 from src.atlasscan.banner import grab_banner
 from src.atlasscan.http import inspect_http
+from src.atlasscan.report import generate_html_report
 from src.atlasscan.scanner import scan_port, scan_ports
 from src.atlasscan.service import identify_service
 from src.atlasscan.technology import fingerprint_technology
@@ -196,3 +197,71 @@ def test_unknown_technology_returns_empty_list():
     )
 
     assert result == []
+
+
+def test_html_report_generation(tmp_path):
+    report_file = tmp_path / "report.html"
+
+    generate_html_report(
+        filename=str(report_file),
+        target="scanme.nmap.org",
+        ports_scanned=6,
+        open_ports=[21, 22, 80],
+        services={
+            21: {
+                "service": "ftp",
+                "version": "unknown",
+            },
+            22: {
+                "service": "ssh",
+                "version": "6.6.1p1",
+            },
+            80: {
+                "service": "http",
+                "version": "2.4.7",
+            },
+        },
+        banners={
+            21: None,
+            22: "SSH-2.0-OpenSSH_6.6.1p1",
+            80: "HTTP/1.1 200 OK",
+        },
+        http_details={
+            80: {
+                "status_code": 200,
+                "server": "Apache/2.4.7 (Ubuntu)",
+                "content_type": "text/html",
+                "content_length": None,
+                "allow": None,
+            }
+        },
+        technologies={
+            22: [
+                {
+                    "name": "OpenSSH 6.6.1p1",
+                    "category": "remote-access",
+                    "detected_from": "banner",
+                }
+            ],
+            80: [
+                {
+                    "name": "Apache 2.4.7",
+                    "category": "web-server",
+                    "detected_from": "banner",
+                }
+            ],
+        },
+        duration=2.5,
+    )
+
+    assert report_file.exists()
+
+    content = report_file.read_text(
+        encoding="utf-8"
+    )
+
+    assert "AtlasScan" in content
+    assert "scanme.nmap.org" in content
+    assert "OpenSSH 6.6.1p1" in content
+    assert "Apache 2.4.7" in content
+    assert "Apache/2.4.7 (Ubuntu)" in content

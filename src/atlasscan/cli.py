@@ -19,6 +19,7 @@ from rich.table import Table
 from src.atlasscan.banner import grab_banner
 from src.atlasscan.config import PROFILES, get_profile
 from src.atlasscan.http import inspect_http
+from src.atlasscan.models import ScanResult
 from src.atlasscan.report import generate_html_report
 from src.atlasscan.scanner import scan_port
 from src.atlasscan.service import identify_service
@@ -44,10 +45,6 @@ def scan_with_progress(
     timeout: float = 1.0,
     workers: int = 100,
 ) -> list[int]:
-    """
-    Scan ports while displaying live progress.
-    """
-
     open_ports = []
 
     workers = max(1, min(workers, len(ports))) if ports else 1
@@ -97,15 +94,10 @@ def collect_banners(
     timeout: float = 2.0,
     workers: int = 20,
 ) -> dict[int, str | None]:
-    """
-    Collect banners from discovered open ports.
-    """
-
     if not open_ports:
         return {}
 
     workers = max(1, min(workers, len(open_ports)))
-
     results = {}
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -134,10 +126,6 @@ def build_service_results(
     open_ports: list[int],
     banners: dict[int, str | None],
 ) -> dict[int, dict[str, str]]:
-    """
-    Identify services from discovered ports and banners.
-    """
-
     results = {}
 
     for port in open_ports:
@@ -154,10 +142,6 @@ def collect_http_details(
     open_ports: list[int],
     banners: dict[int, str | None],
 ) -> dict[int, dict[str, str | int | None]]:
-    """
-    Collect HTTP metadata from ports identified as HTTP services.
-    """
-
     http_ports = []
 
     for port in open_ports:
@@ -203,10 +187,6 @@ def build_technology_results(
     services: dict[int, dict[str, str]],
     http_details: dict[int, dict[str, str | int | None]],
 ) -> dict[int, list[dict[str, str]]]:
-    """
-    Fingerprint technologies for discovered services.
-    """
-
     results = {}
 
     for port in open_ports:
@@ -224,54 +204,18 @@ def build_technology_results(
 
 def save_json_report(
     filename: str,
-    target: str,
-    ports: list[int],
-    open_ports: list[int],
-    banners: dict[int, str | None],
-    services: dict[int, dict[str, str]],
-    http_details: dict[int, dict[str, str | int | None]],
-    technologies: dict[int, list[dict[str, str]]],
-    workers: int,
-    timeout: float,
-    elapsed: float,
-    profile: str | None = None,
+    result: ScanResult,
 ):
     """
-    Save scan results as a JSON report.
+    Save a ScanResult as a JSON report.
     """
 
     report = {
-        "atlas_scan": {
-            "version": "1.0",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "target": target,
-            "profile": profile,
-            "ports_scanned": len(ports),
-            "open_ports": open_ports,
-            "open_port_count": len(open_ports),
-            "services": {
-                str(port): services[port]
-                for port in services
-            },
-            "banners": {
-                str(port): banner
-                for port, banner in banners.items()
-            },
-            "http": {
-                str(port): details
-                for port, details in http_details.items()
-            },
-            "technologies": {
-                str(port): techs
-                for port, techs in technologies.items()
-            },
-            "workers": workers,
-            "timeout": timeout,
-            "duration_seconds": round(elapsed, 4),
-        }
+        "atlas_scan": result.to_dict()
     }
 
     output_path = Path(filename)
+
     output_path.parent.mkdir(
         parents=True,
         exist_ok=True,
@@ -439,27 +383,51 @@ def main():
 
     elapsed = time.perf_counter() - start_time
 
+    result = ScanResult.create(
+        target=args.target,
+        ports_scanned=len(ports),
+        workers=workers,
+        timeout=timeout,
+        profile=profile.name if profile else None,
+    )
+
+    result.open_ports = open_ports
+    result.banners = banners
+    result.services = services
+    result.http = http_details
+    result.technologies = technologies
+    result.duration_seconds = elapsed
+
     table = Table(title="Open Ports")
 
-    table.add_column("Port", justify="center")
-    table.add_column("Status", justify="center")
-    table.add_column("Service", justify="center")
-    table.add_column("Version", justify="center")
+    table.add_column(
+        "Port",
+        justify="center",
+    )
+    table.add_column(
+        "Status",
+        justify="center",
+    )
+    table.add_column(
+        "Service",
+        justify="center",
+    )
+    table.add_column(
+        "Version",
+        justify="center",
+    )
     table.add_column(
         "Technologies",
         overflow="fold",
     )
 
-    if open_ports:
-        for port in open_ports:
-            service_info = services[port]
-
-            service = service_info["service"]
-            version = service_info["version"]
+    if result.open_ports:
+        for port in result.open_ports:
+            service_info = result.services[port]
 
             tech_names = [
                 tech["name"]
-                for tech in technologies.get(
+                for tech in result.technologies.get(
                     port,
                     [],
                 )
@@ -474,8 +442,8 @@ def main():
             table.add_row(
                 str(port),
                 "[green]OPEN[/green]",
-                service,
-                version,
+                service_info["service"],
+                service_info["version"],
                 technology_text,
             )
     else:
@@ -490,7 +458,7 @@ def main():
     console.print()
     console.print(table)
 
-    if http_details:
+    if result.http:
         http_table = Table(
             title="HTTP Details"
         )
@@ -507,7 +475,7 @@ def main():
         http_table.add_column("Content-Type")
         http_table.add_column("Content-Length")
 
-        for port, details in http_details.items():
+        for port, details in result.http.items():
             http_table.add_row(
                 str(port),
                 str(
@@ -533,23 +501,13 @@ def main():
 
     console.print(
         f"\n[bold green]Scan completed in "
-        f"{elapsed:.2f} seconds[/bold green]"
+        f"{result.duration_seconds:.2f} seconds[/bold green]"
     )
 
     if args.json:
         save_json_report(
             filename=args.json,
-            target=args.target,
-            ports=ports,
-            open_ports=open_ports,
-            banners=banners,
-            services=services,
-            http_details=http_details,
-            technologies=technologies,
-            workers=workers,
-            timeout=timeout,
-            elapsed=elapsed,
-            profile=profile.name if profile else None,
+            result=result,
         )
 
         console.print(
@@ -560,14 +518,7 @@ def main():
     if args.html:
         generate_html_report(
             filename=args.html,
-            target=args.target,
-            ports_scanned=len(ports),
-            open_ports=open_ports,
-            services=services,
-            banners=banners,
-            http_details=http_details,
-            technologies=technologies,
-            duration=elapsed,
+            result=result,
         )
 
         console.print(

@@ -2,7 +2,6 @@ import argparse
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.console import Console
@@ -18,6 +17,7 @@ from rich.table import Table
 
 from src.atlasscan.banner import grab_banner
 from src.atlasscan.config import PROFILES, get_profile
+from src.atlasscan.dns import resolve_dns
 from src.atlasscan.http import inspect_http
 from src.atlasscan.models import ScanResult
 from src.atlasscan.report import generate_html_report
@@ -202,14 +202,23 @@ def build_technology_results(
     return results
 
 
+def collect_dns_details(
+    target: str,
+) -> dict:
+    try:
+        return resolve_dns(target)
+    except Exception:
+        return {
+            "a": [],
+            "aaaa": [],
+            "ptr": {},
+        }
+
+
 def save_json_report(
     filename: str,
     result: ScanResult,
 ):
-    """
-    Save a ScanResult as a JSON report.
-    """
-
     report = {
         "atlas_scan": result.to_dict()
     }
@@ -230,6 +239,52 @@ def save_json_report(
             file,
             indent=4,
         )
+
+
+def display_dns_results(
+    dns_data: dict,
+):
+    a_records = dns_data.get("a", [])
+    aaaa_records = dns_data.get("aaaa", [])
+    ptr_records = dns_data.get("ptr", {})
+
+    if not a_records and not aaaa_records and not ptr_records:
+        return
+
+    dns_table = Table(
+        title="DNS Records"
+    )
+
+    dns_table.add_column(
+        "Type",
+        justify="center",
+    )
+
+    dns_table.add_column(
+        "Value"
+    )
+
+    for address in a_records:
+        dns_table.add_row(
+            "A",
+            address,
+        )
+
+    for address in aaaa_records:
+        dns_table.add_row(
+            "AAAA",
+            address,
+        )
+
+    for address, hostnames in ptr_records.items():
+        for hostname in hostnames:
+            dns_table.add_row(
+                "PTR",
+                f"{address} → {hostname}",
+            )
+
+    console.print()
+    console.print(dns_table)
 
 
 def main():
@@ -351,6 +406,12 @@ def main():
 
     start_time = time.perf_counter()
 
+    # DNS reconnaissance
+    dns_data = collect_dns_details(
+        args.target
+    )
+
+    # Port scanning
     open_ports = scan_with_progress(
         args.target,
         ports,
@@ -358,22 +419,26 @@ def main():
         workers=workers,
     )
 
+    # Service banners
     banners = collect_banners(
         args.target,
         open_ports,
     )
 
+    # Service identification
     services = build_service_results(
         open_ports,
         banners,
     )
 
+    # HTTP inspection
     http_details = collect_http_details(
         args.target,
         open_ports,
         banners,
     )
 
+    # Technology fingerprinting
     technologies = build_technology_results(
         open_ports,
         banners,
@@ -383,6 +448,7 @@ def main():
 
     elapsed = time.perf_counter() - start_time
 
+    # Unified result model
     result = ScanResult.create(
         target=args.target,
         ports_scanned=len(ports),
@@ -396,26 +462,34 @@ def main():
     result.services = services
     result.http = http_details
     result.technologies = technologies
+    result.dns = dns_data
     result.duration_seconds = elapsed
 
-    table = Table(title="Open Ports")
+    # Open ports table
+    table = Table(
+        title="Open Ports"
+    )
 
     table.add_column(
         "Port",
         justify="center",
     )
+
     table.add_column(
         "Status",
         justify="center",
     )
+
     table.add_column(
         "Service",
         justify="center",
     )
+
     table.add_column(
         "Version",
         justify="center",
     )
+
     table.add_column(
         "Technologies",
         overflow="fold",
@@ -458,6 +532,7 @@ def main():
     console.print()
     console.print(table)
 
+    # HTTP details
     if result.http:
         http_table = Table(
             title="HTTP Details"
@@ -467,13 +542,23 @@ def main():
             "Port",
             justify="center",
         )
+
         http_table.add_column(
             "Status",
             justify="center",
         )
-        http_table.add_column("Server")
-        http_table.add_column("Content-Type")
-        http_table.add_column("Content-Length")
+
+        http_table.add_column(
+            "Server"
+        )
+
+        http_table.add_column(
+            "Content-Type"
+        )
+
+        http_table.add_column(
+            "Content-Length"
+        )
 
         for port, details in result.http.items():
             http_table.add_row(
@@ -498,6 +583,11 @@ def main():
 
         console.print()
         console.print(http_table)
+
+    # DNS details
+    display_dns_results(
+        result.dns
+    )
 
     console.print(
         f"\n[bold green]Scan completed in "

@@ -17,6 +17,7 @@ from rich.progress import (
 from rich.table import Table
 
 from src.atlasscan.banner import grab_banner
+from src.atlasscan.config import PROFILES, get_profile
 from src.atlasscan.http import inspect_http
 from src.atlasscan.report import generate_html_report
 from src.atlasscan.scanner import scan_port
@@ -233,6 +234,7 @@ def save_json_report(
     workers: int,
     timeout: float,
     elapsed: float,
+    profile: str | None = None,
 ):
     """
     Save scan results as a JSON report.
@@ -243,6 +245,7 @@ def save_json_report(
             "version": "1.0",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "target": target,
+            "profile": profile,
             "ports_scanned": len(ports),
             "open_ports": open_ports,
             "open_port_count": len(open_ports),
@@ -269,15 +272,28 @@ def save_json_report(
     }
 
     output_path = Path(filename)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    with output_path.open("w", encoding="utf-8") as file:
-        json.dump(report, file, indent=4)
+    with output_path.open(
+        "w",
+        encoding="utf-8",
+    ) as file:
+        json.dump(
+            report,
+            file,
+            indent=4,
+        )
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="AtlasScan - Professional Network Reconnaissance Toolkit"
+        description=(
+            "AtlasScan - Professional Network "
+            "Reconnaissance Toolkit"
+        )
     )
 
     parser.add_argument(
@@ -288,10 +304,11 @@ def main():
     parser.add_argument(
         "-p",
         "--ports",
-        default="21,22,80",
+        default=None,
         help=(
             "Ports to scan "
-            "(Examples: 22 | 22,80,443 | 1-100 | 20-25,80,443)"
+            "(Examples: 22 | 22,80,443 | "
+            "1-100 | 20-25,80,443)"
         ),
     )
 
@@ -299,16 +316,22 @@ def main():
         "-t",
         "--timeout",
         type=float,
-        default=1.0,
-        help="Connection timeout in seconds (default: 1.0)",
+        default=None,
+        help="Connection timeout in seconds",
     )
 
     parser.add_argument(
         "-w",
         "--workers",
         type=int,
-        default=100,
-        help="Maximum concurrent workers (default: 100)",
+        default=None,
+        help="Maximum concurrent workers",
+    )
+
+    parser.add_argument(
+        "--profile",
+        choices=sorted(PROFILES.keys()),
+        help="Use a predefined scan profile",
     )
 
     parser.add_argument(
@@ -325,26 +348,61 @@ def main():
 
     args = parser.parse_args()
 
-    if args.timeout <= 0:
+    profile = None
+
+    if args.profile:
+        profile = get_profile(args.profile)
+
+    if args.ports is not None:
+        ports_spec = args.ports
+    elif profile:
+        ports_spec = profile.ports
+    else:
+        ports_spec = "21,22,80"
+
+    if args.timeout is not None:
+        timeout = args.timeout
+    elif profile:
+        timeout = profile.timeout
+    else:
+        timeout = 1.0
+
+    if args.workers is not None:
+        workers = args.workers
+    elif profile:
+        workers = profile.workers
+    else:
+        workers = 100
+
+    if timeout <= 0:
         parser.error("timeout must be greater than 0")
 
-    if args.workers <= 0:
+    if workers <= 0:
         parser.error("workers must be greater than 0")
 
     banner()
 
-    ports = parse_ports(args.ports)
+    ports = parse_ports(ports_spec)
 
     console.print(
         f"\n[bold cyan]Target:[/bold cyan] {args.target}"
     )
+
+    if profile:
+        console.print(
+            f"[bold cyan]Profile:[/bold cyan] {profile.name}"
+        )
 
     console.print(
         f"[bold cyan]Ports:[/bold cyan] {len(ports)}"
     )
 
     console.print(
-        f"[bold cyan]Workers:[/bold cyan] {args.workers}"
+        f"[bold cyan]Workers:[/bold cyan] {workers}"
+    )
+
+    console.print(
+        f"[bold cyan]Timeout:[/bold cyan] {timeout}s"
     )
 
     start_time = time.perf_counter()
@@ -352,8 +410,8 @@ def main():
     open_ports = scan_with_progress(
         args.target,
         ports,
-        timeout=args.timeout,
-        workers=args.workers,
+        timeout=timeout,
+        workers=workers,
     )
 
     banners = collect_banners(
@@ -387,7 +445,10 @@ def main():
     table.add_column("Status", justify="center")
     table.add_column("Service", justify="center")
     table.add_column("Version", justify="center")
-    table.add_column("Technologies", overflow="fold")
+    table.add_column(
+        "Technologies",
+        overflow="fold",
+    )
 
     if open_ports:
         for port in open_ports:
@@ -398,7 +459,10 @@ def main():
 
             tech_names = [
                 tech["name"]
-                for tech in technologies.get(port, [])
+                for tech in technologies.get(
+                    port,
+                    [],
+                )
             ]
 
             technology_text = (
@@ -427,10 +491,18 @@ def main():
     console.print(table)
 
     if http_details:
-        http_table = Table(title="HTTP Details")
+        http_table = Table(
+            title="HTTP Details"
+        )
 
-        http_table.add_column("Port", justify="center")
-        http_table.add_column("Status", justify="center")
+        http_table.add_column(
+            "Port",
+            justify="center",
+        )
+        http_table.add_column(
+            "Status",
+            justify="center",
+        )
         http_table.add_column("Server")
         http_table.add_column("Content-Type")
         http_table.add_column("Content-Length")
@@ -438,10 +510,22 @@ def main():
         for port, details in http_details.items():
             http_table.add_row(
                 str(port),
-                str(details.get("status_code") or "Unknown"),
-                str(details.get("server") or "Unknown"),
-                str(details.get("content_type") or "Unknown"),
-                str(details.get("content_length") or "Unknown"),
+                str(
+                    details.get("status_code")
+                    or "Unknown"
+                ),
+                str(
+                    details.get("server")
+                    or "Unknown"
+                ),
+                str(
+                    details.get("content_type")
+                    or "Unknown"
+                ),
+                str(
+                    details.get("content_length")
+                    or "Unknown"
+                ),
             )
 
         console.print()
@@ -462,9 +546,10 @@ def main():
             services=services,
             http_details=http_details,
             technologies=technologies,
-            workers=args.workers,
-            timeout=args.timeout,
+            workers=workers,
+            timeout=timeout,
             elapsed=elapsed,
+            profile=profile.name if profile else None,
         )
 
         console.print(

@@ -1,5 +1,9 @@
 import argparse
+import json
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
+from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
@@ -42,8 +46,6 @@ def scan_with_progress(
 
     workers = max(1, min(workers, len(ports))) if ports else 1
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -76,6 +78,40 @@ def scan_with_progress(
                 progress.advance(task)
 
     return sorted(open_ports)
+
+
+def save_json_report(
+    filename: str,
+    target: str,
+    ports: list[int],
+    open_ports: list[int],
+    workers: int,
+    timeout: float,
+    elapsed: float,
+):
+    """
+    Save scan results as a JSON report.
+    """
+
+    report = {
+        "atlas_scan": {
+            "version": "1.0",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "target": target,
+            "ports_scanned": len(ports),
+            "open_ports": open_ports,
+            "open_port_count": len(open_ports),
+            "workers": workers,
+            "timeout": timeout,
+            "duration_seconds": round(elapsed, 4),
+        }
+    }
+
+    output_path = Path(filename)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with output_path.open("w", encoding="utf-8") as file:
+        json.dump(report, file, indent=4)
 
 
 def main():
@@ -112,6 +148,12 @@ def main():
         type=int,
         default=100,
         help="Maximum concurrent workers (default: 100)",
+    )
+
+    parser.add_argument(
+        "--json",
+        metavar="FILE",
+        help="Save scan results to a JSON file",
     )
 
     args = parser.parse_args()
@@ -173,6 +215,22 @@ def main():
         f"\n[bold green]Scan completed in "
         f"{elapsed:.2f} seconds[/bold green]"
     )
+
+    if args.json:
+        save_json_report(
+            filename=args.json,
+            target=args.target,
+            ports=ports,
+            open_ports=open_ports,
+            workers=args.workers,
+            timeout=args.timeout,
+            elapsed=elapsed,
+        )
+
+        console.print(
+            f"[bold green]JSON report saved:[/bold green] "
+            f"{args.json}"
+        )
 
 
 if __name__ == "__main__":

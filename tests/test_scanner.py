@@ -1,3 +1,5 @@
+import json
+
 from src.atlasscan.scanner import scan_port, scan_ports
 
 
@@ -14,3 +16,32 @@ def test_scan_ports_returns_list():
 def test_scan_ports_returns_sorted_list():
     ports = scan_ports("scanme.nmap.org", [80, 22])
     assert ports == sorted(ports)
+
+
+def test_json_report_structure(tmp_path):
+    report = {
+        "atlas_scan": {
+            "version": "1.0",
+            "target": "scanme.nmap.org",
+            "ports_scanned": 3,
+            "open_ports": [22, 80],
+            "open_port_count": 2,
+            "workers": 100,
+            "timeout": 1.0,
+            "duration_seconds": 0.5,
+        }
+    }
+
+    report_file = tmp_path / "report.json"
+    report_file.write_text(
+        json.dumps(report),
+        encoding="utf-8",
+    )
+
+    data = json.loads(
+        report_file.read_text(encoding="utf-8")
+    )
+
+    assert "atlas_scan" in data
+    assert data["atlas_scan"]["target"] == "scanme.nmap.org"
+    assert data["atlas_scan"]["open_ports"] == [22, 80]

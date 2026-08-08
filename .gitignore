@@ -20,6 +20,8 @@ htmlcov/
 # OS
 .DS_Store
 
-# Reports
+# Generated Reports
 reports/*.json
 reports/*.html
+*.report.json
+report.json

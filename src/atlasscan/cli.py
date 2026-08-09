@@ -1070,16 +1070,22 @@ def main():
     # ---------------------------------------------------------
     # DNS reconnaissance
     # ---------------------------------------------------------
-    dns_data = collect_dns_details(
-        args.target
-    )
+    if profile is None or profile.dns:
+        dns_data = collect_dns_details(
+            args.target
+        )
+    else:
+        dns_data = {}
 
     # ---------------------------------------------------------
     # Subdomain discovery
     # ---------------------------------------------------------
-    subdomains = collect_subdomains(
-        args.target
-    )
+    if profile is None or profile.subdomains:
+        subdomains = collect_subdomains(
+            args.target
+        )
+    else:
+        subdomains = []
 
     # ---------------------------------------------------------
     # Port scanning
@@ -1094,10 +1100,13 @@ def main():
     # ---------------------------------------------------------
     # Service banners
     # ---------------------------------------------------------
-    banners = collect_banners(
-        args.target,
-        open_ports,
-    )
+    if profile is None or profile.banners:
+        banners = collect_banners(
+            args.target,
+            open_ports,
+        )
+    else:
+        banners = {}
 
     # ---------------------------------------------------------
     # Service identification
@@ -1110,31 +1119,40 @@ def main():
     # ---------------------------------------------------------
     # HTTP inspection
     # ---------------------------------------------------------
-    http_details = collect_http_details(
-        args.target,
-        open_ports,
-        banners,
-    )
+    if profile is None or profile.http:
+        http_details = collect_http_details(
+            args.target,
+            open_ports,
+            banners,
+        )
+    else:
+        http_details = {}
 
     # ---------------------------------------------------------
     # Technology fingerprinting
     # ---------------------------------------------------------
-    technologies = build_technology_results(
-        open_ports,
-        banners,
-        services,
-        http_details,
-    )
+    if profile is None or profile.technologies:
+        technologies = build_technology_results(
+            open_ports,
+            banners,
+            services,
+            http_details,
+        )
+    else:
+        technologies = {}
 
     # ---------------------------------------------------------
     # Vulnerability intelligence
     # ---------------------------------------------------------
-    vulnerabilities = collect_vulnerability_details(
-        open_ports,
-        services,
-        banners,
-        technologies,
-    )
+    if profile is None or profile.vulnerabilities:
+        vulnerabilities = collect_vulnerability_details(
+            open_ports,
+            services,
+            banners,
+            technologies,
+        )
+    else:
+        vulnerabilities = {}
 
     # ---------------------------------------------------------
     # Determine HTTP/HTTPS ports
@@ -1149,36 +1167,48 @@ def main():
     # ---------------------------------------------------------
     # Deep web inspection
     # ---------------------------------------------------------
-    web_details = collect_web_details(
-        args.target,
-        http_ports,
-        timeout=max(3.0, timeout),
-    )
+    if profile is None or profile.web:
+        web_details = collect_web_details(
+            args.target,
+            http_ports,
+            timeout=max(3.0, timeout),
+        )
+    else:
+        web_details = {}
 
     # ---------------------------------------------------------
     # Security analysis
     # ---------------------------------------------------------
-    security_details = collect_security_details(
-        web_details
-    )
+    if profile is None or profile.security:
+        security_details = collect_security_details(
+            web_details
+        )
+    else:
+        security_details = {}
 
     # ---------------------------------------------------------
     # robots.txt
     # ---------------------------------------------------------
-    robots_details = collect_robots_details(
-        args.target,
-        http_ports,
-        timeout=max(3.0, timeout),
-    )
+    if profile is None or profile.robots:
+        robots_details = collect_robots_details(
+            args.target,
+            http_ports,
+            timeout=max(3.0, timeout),
+        )
+    else:
+        robots_details = {}
 
     # ---------------------------------------------------------
     # Common web paths
     # ---------------------------------------------------------
-    web_paths = collect_web_paths(
-        args.target,
-        http_ports,
-        timeout=max(3.0, timeout),
-    )
+    if profile is None or profile.web_paths:
+        web_paths = collect_web_paths(
+            args.target,
+            http_ports,
+            timeout=max(3.0, timeout),
+        )
+    else:
+        web_paths = {}
 
     elapsed = time.perf_counter() - start_time
 

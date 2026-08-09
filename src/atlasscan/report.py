@@ -987,8 +987,48 @@ tr:last-child td {
         )
 
     # ---------------------------------------------------------
-    # Security Assessment
+    # Unified Security Assessment
     # ---------------------------------------------------------
+
+    unified_risk = result.unified_risk or {}
+
+    unified_score = unified_risk.get(
+        "score",
+        result.security_risk_score,
+    )
+
+    unified_grade = unified_risk.get(
+        "grade",
+        result.security_grade,
+    )
+
+    unified_risk_level = unified_risk.get(
+        "risk_level",
+        "unknown",
+    )
+
+    unified_breakdown = unified_risk.get(
+        "breakdown",
+        {},
+    )
+
+    security_breakdown = (
+        unified_breakdown.get(
+            "security",
+            {},
+        )
+        if isinstance(unified_breakdown, dict)
+        else {}
+    )
+
+    vulnerability_breakdown = (
+        unified_breakdown.get(
+            "vulnerabilities",
+            {},
+        )
+        if isinstance(unified_breakdown, dict)
+        else {}
+    )
 
     html_parts.append(
         f"""
@@ -1000,19 +1040,28 @@ tr:last-child td {
 
     <div class="stat">
         <div class="stat-value">
-            {result.security_risk_score} / 100
+            {_escape(unified_score)} / 100
         </div>
         <div class="stat-label">
-            Risk Score
+            Unified Risk Score
         </div>
     </div>
 
     <div class="stat">
         <div class="stat-value">
-            {_escape(result.security_grade)}
+            {_escape(unified_grade)}
         </div>
         <div class="stat-label">
             Security Grade
+        </div>
+    </div>
+
+    <div class="stat">
+        <div class="stat-value">
+            {_escape(unified_risk_level).upper()}
+        </div>
+        <div class="stat-label">
+            Risk Level
         </div>
     </div>
 
@@ -1025,16 +1074,79 @@ tr:last-child td {
         </div>
     </div>
 
+    <div class="stat">
+        <div class="stat-value">
+            {result.vulnerability_count}
+        </div>
+        <div class="stat-label">
+            Vulnerability Matches
+        </div>
+    </div>
+
 </div>
 
-<p>
-    The score is derived from observed HTTP security-header findings.
-    It represents reconnaissance evidence and does not prove exploitability.
-</p>
+<div class="stats">
+
+    <div class="stat">
+        <div class="stat-value">
+            {security_breakdown.get("critical", 0)}
+        </div>
+        <div class="stat-label">
+            Security Critical
+        </div>
+    </div>
+
+    <div class="stat">
+        <div class="stat-value">
+            {security_breakdown.get("high", 0)}
+        </div>
+        <div class="stat-label">
+            Security High
+        </div>
+    </div>
+
+    <div class="stat">
+        <div class="stat-value">
+            {security_breakdown.get("medium", 0)}
+        </div>
+        <div class="stat-label">
+            Security Medium
+        </div>
+    </div>
+
+    <div class="stat">
+        <div class="stat-value">
+            {vulnerability_breakdown.get("critical", 0)}
+        </div>
+        <div class="stat-label">
+            Vulnerability Critical
+        </div>
+    </div>
+
+    <div class="stat">
+        <div class="stat-value">
+            {vulnerability_breakdown.get("high", 0)}
+        </div>
+        <div class="stat-label">
+            Vulnerability High
+        </div>
+    </div>
+
+    <div class="stat">
+        <div class="stat-value">
+            {vulnerability_breakdown.get("medium", 0)}
+        </div>
+        <div class="stat-label">
+            Vulnerability Medium
+        </div>
+    </div>
+
+</div>
 
 </div>
 """
     )
+
 
     # ---------------------------------------------------------
     # Security Findings

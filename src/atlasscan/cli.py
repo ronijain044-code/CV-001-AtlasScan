@@ -29,6 +29,7 @@ from src.atlasscan.subdomain import discover_subdomains
 from src.atlasscan.technology import fingerprint_technology
 from src.atlasscan.utils import parse_ports
 from src.atlasscan.vulnerability import find_vulnerabilities
+from src.atlasscan.webchecks import analyze_web_checks
 from src.atlasscan.web import (
     check_robots,
     discover_common_paths,
@@ -374,30 +375,136 @@ def collect_web_paths(
 def collect_security_details(
     web_data: dict[int, dict],
 ) -> dict[int, dict]:
-    """Analyze HTTP security headers for each inspected web service."""
+    """
+    Analyze HTTP security headers and passive web-security checks
+    for each inspected web service.
+    """
     if not web_data:
         return {}
 
     results: dict[int, dict] = {}
 
     for port, details in web_data.items():
-        headers = details.get("headers", {})
+        if not isinstance(details, dict):
+            continue
 
+        headers = details.get("headers", {})
+        status_code = details.get("status_code")
+        url = details.get("url") or details.get("final_url")
+
+        if not isinstance(headers, dict):
+            headers = {}
+
+        observations: list[dict] = []
+
+        # ---------------------------------------------------------
+        # Existing security-header analysis
+        # ---------------------------------------------------------
         try:
-            results[port] = analyze_security_headers(headers)
-        except Exception as exc:
-            results[port] = {
+            header_analysis = analyze_security_headers(headers)
+
+            if isinstance(header_analysis, dict):
+                header_observations = header_analysis.get(
+                    "observations",
+                    [],
+                )
+
+                if isinstance(header_observations, list):
+                    observations.extend(
+                        item
+                        for item in header_observations
+                        if isinstance(item, dict)
+                    )
+
+        except Exception:
+            header_analysis = {
                 "headers": {},
                 "present_count": 0,
                 "missing_count": 0,
                 "total_count": 0,
                 "missing": [],
                 "observations": [],
-                "error": str(exc),
             }
 
-    return dict(sorted(results.items()))
+        # ---------------------------------------------------------
+        # Passive web-security checks
+        # ---------------------------------------------------------
+        if (
+            isinstance(status_code, int)
+            and isinstance(url, str)
+            and url
+        ):
+            try:
+                web_check_result = analyze_web_checks(
+                    status_code=status_code,
+                    headers=headers,
+                    url=url,
+                )
 
+                if isinstance(web_check_result, dict):
+                    web_observations = web_check_result.get(
+                        "observations",
+                        [],
+                    )
+
+                    if isinstance(web_observations, list):
+                        observations.extend(
+                            item
+                            for item in web_observations
+                            if isinstance(item, dict)
+                        )
+
+            except Exception:
+                pass
+
+        # ---------------------------------------------------------
+        # Deduplicate observations
+        # ---------------------------------------------------------
+        unique_observations: list[dict] = []
+        seen_titles: set[str] = set()
+
+        for observation in observations:
+            if not isinstance(observation, dict):
+                continue
+
+            title = str(
+                observation.get("title", "")
+            ).strip().lower()
+
+            # If there is no title, preserve the observation.
+            if not title:
+                unique_observations.append(observation)
+                continue
+
+            if title in seen_titles:
+                continue
+
+            seen_titles.add(title)
+            unique_observations.append(observation)
+
+        # ---------------------------------------------------------
+        # Build combined security result
+        # ---------------------------------------------------------
+        result = dict(header_analysis)
+
+        result["observations"] = unique_observations
+        result["observation_count"] = len(
+            unique_observations
+        )
+
+        # Preserve the passive web-check data.
+        result["web_checks"] = (
+            web_check_result
+            if isinstance(
+                locals().get("web_check_result"),
+                dict,
+            )
+            else {}
+        )
+
+        results[port] = result
+
+    return dict(sorted(results.items()))
 
 def _vulnerability_product(
     service_info: dict,

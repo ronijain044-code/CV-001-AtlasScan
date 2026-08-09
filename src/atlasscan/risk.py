@@ -3,6 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 
+# ---------------------------------------------------------
+# Severity configuration
+# ---------------------------------------------------------
+
 SEVERITY_DEDUCTIONS = {
     "critical": 25,
     "high": 10,
@@ -10,6 +14,14 @@ SEVERITY_DEDUCTIONS = {
     "low": 2,
 }
 
+# Vulnerabilities are capped so multiple CVEs do not make
+# the score meaningless by themselves.
+MAX_VULNERABILITY_DEDUCTION = 50
+
+
+# ---------------------------------------------------------
+# Severity helpers
+# ---------------------------------------------------------
 
 def _severity_counts() -> dict[str, int]:
     return {
@@ -27,16 +39,16 @@ def _extract_observations(
     """
     Extract observations/findings from a port-keyed result structure.
 
-    Supports both formats:
+    Supports:
 
-    Security:
+        Security:
         {
             80: {
                 "observations": [...]
             }
         }
 
-    Vulnerabilities:
+        Vulnerabilities:
         {
             80: [
                 {...},
@@ -44,7 +56,7 @@ def _extract_observations(
             ]
         }
 
-    Also supports the wrapped format:
+    Also supports:
 
         {
             80: {
@@ -60,11 +72,11 @@ def _extract_observations(
 
     for details in data.values():
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # Format 1:
         # port -> list of findings
-        # Used by ScanResult.vulnerabilities
-        # -----------------------------------------------------
+        # -------------------------------------------------
+
         if isinstance(details, list):
             for item in details:
                 if isinstance(item, dict):
@@ -72,14 +84,14 @@ def _extract_observations(
 
             continue
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # Format 2:
         # port -> {"observations": [...]}
         # or
         # port -> {"findings": [...]}
-        # -----------------------------------------------------
-        if isinstance(details, dict):
+        # -------------------------------------------------
 
+        if isinstance(details, dict):
             items = details.get(key, [])
 
             if not isinstance(items, list):
@@ -108,9 +120,17 @@ def _count_severities(
     return counts
 
 
+# ---------------------------------------------------------
+# Deduction calculation
+# ---------------------------------------------------------
+
 def _calculate_deduction(
     counts: dict[str, int],
 ) -> int:
+    """
+    Calculate the raw deduction from severity counts.
+    """
+
     deduction = 0
 
     for severity, count in counts.items():
@@ -120,6 +140,35 @@ def _calculate_deduction(
 
     return deduction
 
+
+def _calculate_vulnerability_deduction(
+    counts: dict[str, int],
+) -> int:
+    """
+    Calculate vulnerability deduction with a safety cap.
+
+    The raw severity model remains:
+
+        critical = 25
+        high     = 10
+        medium   = 5
+        low      = 2
+
+    but the total vulnerability contribution cannot exceed
+    MAX_VULNERABILITY_DEDUCTION.
+    """
+
+    raw_deduction = _calculate_deduction(counts)
+
+    return min(
+        raw_deduction,
+        MAX_VULNERABILITY_DEDUCTION,
+    )
+
+
+# ---------------------------------------------------------
+# Grade calculation
+# ---------------------------------------------------------
 
 def _grade_from_score(score: int) -> str:
     if score >= 90:
@@ -137,6 +186,10 @@ def _grade_from_score(score: int) -> str:
     return "F"
 
 
+# ---------------------------------------------------------
+# Risk level calculation
+# ---------------------------------------------------------
+
 def _risk_level_from_grade(grade: str) -> str:
     if grade == "A":
         return "low"
@@ -153,37 +206,59 @@ def _risk_level_from_grade(grade: str) -> str:
     return "critical"
 
 
+# ---------------------------------------------------------
+# Unified risk engine
+# ---------------------------------------------------------
+
 def calculate_unified_risk(
-    security: dict[int, dict[str, Any]] | None = None,
-    vulnerabilities: dict[int, dict[str, Any]] | None = None,
+    security: dict[int, Any] | None = None,
+    vulnerabilities: dict[int, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Calculate a unified security risk score.
 
-    The score starts at 100 and deductions are applied for
-    security-header observations and vulnerability findings.
+    The score starts at 100.
 
-    Severity deductions:
+    Security observations use the full severity deduction:
 
         critical = 25
         high     = 10
         medium   = 5
         low      = 2
 
-    Returns a normalized result containing:
+    Vulnerability findings use the same severity values,
+    but the total vulnerability deduction is capped at 50.
+
+    Returns:
 
         score
         grade
         risk_level
+
         observation_count
         security_observation_count
         vulnerability_count
+
+        security_critical_count
+        security_high_count
+        security_medium_count
+        security_low_count
+
+        vulnerability_critical_count
+        vulnerability_high_count
+        vulnerability_medium_count
+        vulnerability_low_count
+
         breakdown
         deductions
     """
 
     security = security or {}
     vulnerabilities = vulnerabilities or {}
+
+    # -----------------------------------------------------
+    # Extract observations
+    # -----------------------------------------------------
 
     security_observations = _extract_observations(
         security,
@@ -195,6 +270,10 @@ def calculate_unified_risk(
         "findings",
     )
 
+    # -----------------------------------------------------
+    # Count severities
+    # -----------------------------------------------------
+
     security_counts = _count_severities(
         security_observations
     )
@@ -203,18 +282,32 @@ def calculate_unified_risk(
         vulnerability_findings
     )
 
+    # -----------------------------------------------------
+    # Calculate deductions
+    # -----------------------------------------------------
+
     security_deduction = _calculate_deduction(
         security_counts
     )
 
-    vulnerability_deduction = _calculate_deduction(
+    raw_vulnerability_deduction = _calculate_deduction(
         vulnerability_counts
+    )
+
+    vulnerability_deduction = (
+        _calculate_vulnerability_deduction(
+            vulnerability_counts
+        )
     )
 
     total_deduction = (
         security_deduction
         + vulnerability_deduction
     )
+
+    # -----------------------------------------------------
+    # Calculate final score
+    # -----------------------------------------------------
 
     score = max(
         0,
@@ -224,9 +317,17 @@ def calculate_unified_risk(
         ),
     )
 
+    # -----------------------------------------------------
+    # Grade + risk level
+    # -----------------------------------------------------
+
     grade = _grade_from_score(score)
 
     risk_level = _risk_level_from_grade(grade)
+
+    # -----------------------------------------------------
+    # Counts
+    # -----------------------------------------------------
 
     security_count = len(
         security_observations
@@ -241,10 +342,24 @@ def calculate_unified_risk(
         + vulnerability_count
     )
 
+    # -----------------------------------------------------
+    # Result
+    # -----------------------------------------------------
+
     return {
+        # ---------------------------------------------
+        # Overall result
+        # ---------------------------------------------
+
         "score": score,
+
         "grade": grade,
+
         "risk_level": risk_level,
+
+        # ---------------------------------------------
+        # Overall counts
+        # ---------------------------------------------
 
         "observation_count": observation_count,
 
@@ -255,6 +370,10 @@ def calculate_unified_risk(
         "vulnerability_count": (
             vulnerability_count
         ),
+
+        # ---------------------------------------------
+        # Security severity counts
+        # ---------------------------------------------
 
         "security_critical_count": (
             security_counts["critical"]
@@ -272,6 +391,10 @@ def calculate_unified_risk(
             security_counts["low"]
         ),
 
+        # ---------------------------------------------
+        # Vulnerability severity counts
+        # ---------------------------------------------
+
         "vulnerability_critical_count": (
             vulnerability_counts["critical"]
         ),
@@ -288,14 +411,43 @@ def calculate_unified_risk(
             vulnerability_counts["low"]
         ),
 
+        # ---------------------------------------------
+        # Severity breakdown
+        # ---------------------------------------------
+
         "breakdown": {
-            "security": security_counts,
-            "vulnerabilities": vulnerability_counts,
+            "security": {
+                "critical": security_counts["critical"],
+                "high": security_counts["high"],
+                "medium": security_counts["medium"],
+                "low": security_counts["low"],
+            },
+
+            "vulnerabilities": {
+                "critical": vulnerability_counts["critical"],
+                "high": vulnerability_counts["high"],
+                "medium": vulnerability_counts["medium"],
+                "low": vulnerability_counts["low"],
+            },
         },
+
+        # ---------------------------------------------
+        # Deduction details
+        # ---------------------------------------------
 
         "deductions": {
             "security": security_deduction,
+
             "vulnerabilities": vulnerability_deduction,
+
+            "vulnerabilities_raw": (
+                raw_vulnerability_deduction
+            ),
+
+            "vulnerability_cap": (
+                MAX_VULNERABILITY_DEDUCTION
+            ),
+
             "total": total_deduction,
         },
     }

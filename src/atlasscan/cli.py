@@ -27,6 +27,7 @@ from src.atlasscan.service import identify_service
 from src.atlasscan.subdomain import discover_subdomains
 from src.atlasscan.technology import fingerprint_technology
 from src.atlasscan.utils import parse_ports
+from src.atlasscan.vulnerability import find_vulnerabilities
 from src.atlasscan.web import (
     check_robots,
     discover_common_paths,
@@ -395,6 +396,111 @@ def collect_security_details(
             }
 
     return dict(sorted(results.items()))
+
+
+def _vulnerability_product(
+    service_info: dict,
+    banner: str | None,
+    technologies: list[dict],
+) -> str | None:
+    """Infer a product name suitable for local vulnerability matching."""
+    for technology in technologies:
+        name = str(technology.get("name") or "").strip()
+
+        if name.lower().startswith("apache"):
+            return "Apache HTTP Server"
+
+        if name.lower().startswith("openssh"):
+            return "OpenSSH"
+
+    banner_text = str(banner or "")
+    if "apache/" in banner_text.lower():
+        return "Apache HTTP Server"
+
+    service = str(service_info.get("service") or "").lower()
+    if service == "http" and "apache" in banner_text.lower():
+        return "Apache HTTP Server"
+
+    return service_info.get("product")
+
+
+def collect_vulnerability_details(
+    open_ports: list[int],
+    services: dict[int, dict[str, str]],
+    banners: dict[int, str | None],
+    technologies: dict[int, list[dict]],
+) -> dict[int, list[dict]]:
+    """Map detected service versions to curated potential vulnerabilities."""
+    results: dict[int, list[dict]] = {}
+
+    for port in open_ports:
+        service_info = services.get(port, {})
+        version = service_info.get("version")
+
+        if not version or str(version).lower() == "unknown":
+            continue
+
+        product = _vulnerability_product(
+            service_info,
+            banners.get(port),
+            technologies.get(port, []),
+        )
+
+        findings = find_vulnerabilities(
+            product=product,
+            version=version,
+        )
+
+        if findings:
+            for finding in findings:
+                finding["port"] = port
+
+            results[port] = findings
+
+    return dict(sorted(results.items()))
+
+
+def display_vulnerability_results(
+    vulnerabilities: dict[int, list[dict]],
+):
+    """Display potential vulnerability matches in the terminal."""
+    if not vulnerabilities:
+        return
+
+    table = Table(title="Vulnerability Findings")
+
+    table.add_column("Port", justify="center")
+    table.add_column("CVE")
+    table.add_column("Severity", justify="center")
+    table.add_column("Product")
+    table.add_column("Evidence")
+
+    severity_styles = {
+        "critical": "[bold red]CRITICAL[/bold red]",
+        "high": "[red]HIGH[/red]",
+        "medium": "[yellow]MEDIUM[/yellow]",
+        "low": "[cyan]LOW[/cyan]",
+    }
+
+    for port, findings in vulnerabilities.items():
+        for finding in findings:
+            severity = str(
+                finding.get("severity", "unknown")
+            ).lower()
+
+            table.add_row(
+                str(port),
+                str(finding.get("cve") or "Unknown"),
+                severity_styles.get(
+                    severity,
+                    severity.upper(),
+                ),
+                str(finding.get("product") or "Unknown"),
+                str(finding.get("evidence") or "Unknown"),
+            )
+
+    console.print()
+    console.print(table)
 
 
 def save_json_report(
@@ -913,6 +1019,16 @@ def main():
     )
 
     # ---------------------------------------------------------
+    # Vulnerability intelligence
+    # ---------------------------------------------------------
+    vulnerabilities = collect_vulnerability_details(
+        open_ports,
+        services,
+        banners,
+        technologies,
+    )
+
+    # ---------------------------------------------------------
     # Determine HTTP/HTTPS ports
     # ---------------------------------------------------------
     http_ports = sorted(
@@ -982,6 +1098,7 @@ def main():
     result.robots = robots_details
     result.web_paths = web_paths
     result.security = security_details
+    result.vulnerabilities = vulnerabilities
 
     result.duration_seconds = elapsed
 
@@ -1141,6 +1258,13 @@ def main():
     # ---------------------------------------------------------
     display_security_findings(
         result.security
+    )
+
+    # ---------------------------------------------------------
+    # Vulnerability intelligence
+    # ---------------------------------------------------------
+    display_vulnerability_results(
+        result.vulnerabilities
     )
 
     # ---------------------------------------------------------

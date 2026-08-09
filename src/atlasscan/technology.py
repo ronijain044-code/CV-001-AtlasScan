@@ -1,269 +1,597 @@
+from __future__ import annotations
+
 import re
+from typing import Any
 
 
-def fingerprint_technology(
-    service: str,
-    version: str | None = None,
-    banner: str | None = None,
-    http_details: dict | None = None,
-) -> list[dict[str, str]]:
+Technology = dict[str, str]
+
+
+def _normalize(value: object) -> str:
+    if value is None:
+        return ""
+
+    return str(value).strip()
+
+
+def _lower(value: object) -> str:
+    return _normalize(value).lower()
+
+
+def _add(
+    results: list[Technology],
+    seen: set[tuple[str, str]],
+    *,
+    name: str,
+    category: str,
+    detected_from: str,
+) -> None:
     """
-    Identify technologies from service, version, banner,
-    and HTTP response metadata.
+    Add a technology while preventing duplicates.
     """
 
-    technologies: list[dict[str, str]] = []
-    seen: set[str] = set()
+    name = name.strip()
 
-    def add_technology(
-        name: str,
-        category: str,
-        detected_from: str,
-    ) -> None:
-        key = name.lower()
+    if not name:
+        return
 
-        if key in seen:
-            return
-
-        seen.add(key)
-
-        technologies.append(
-            {
-                "name": name,
-                "category": category,
-                "detected_from": detected_from,
-            }
-        )
-
-    service_lower = (service or "").lower()
-    version_text = version or ""
-    banner_text = banner or ""
-
-    combined = (
-        f"{service_lower} "
-        f"{version_text} "
-        f"{banner_text}"
+    key = (
+        name.lower(),
+        category.lower(),
     )
 
-    combined_lower = combined.lower()
+    if key in seen:
+        return
 
-    # SSH
-    if "openssh" in combined_lower:
+    seen.add(key)
+
+    results.append(
+        {
+            "name": name,
+            "category": category,
+            "detected_from": detected_from,
+        }
+    )
+
+
+def _extract_version(
+    value: str,
+    product: str,
+) -> str | None:
+    """
+    Extract a semantic-ish version from a product string.
+
+    Examples:
+        Apache/2.4.7
+        nginx/1.24.0
+        OpenSSH_9.6p1
+    """
+
+    if not value:
+        return None
+
+    pattern = re.compile(
+        rf"{re.escape(product)}[\/_\s-]*"
+        r"([0-9]+(?:\.[0-9]+)+(?:[A-Za-z0-9.-]*)?)",
+        re.IGNORECASE,
+    )
+
+    match = pattern.search(value)
+
+    if not match:
+        return None
+
+    return match.group(1)
+
+
+def _technology_name(
+    product: str,
+    version: str | None,
+) -> str:
+    if version:
+        return f"{product} {version}"
+
+    return product
+
+
+def _detect_server_header(
+    server: str,
+    results: list[Technology],
+    seen: set[tuple[str, str]],
+) -> None:
+    """
+    Detect web-server technologies from the Server header.
+    """
+
+    value = _normalize(server)
+
+    if not value:
+        return
+
+    lower = value.lower()
+
+    # Apache
+    if "apache" in lower:
+        version = _extract_version(value, "Apache")
+
+        _add(
+            results,
+            seen,
+            name=_technology_name("Apache", version),
+            category="web-server",
+            detected_from="server-header",
+        )
+
+    # nginx
+    if "nginx" in lower:
+        version = _extract_version(value, "nginx")
+
+        _add(
+            results,
+            seen,
+            name=_technology_name("Nginx", version),
+            category="web-server",
+            detected_from="server-header",
+        )
+
+    # Microsoft IIS
+    if "microsoft-iis" in lower or "iis/" in lower:
+        version = _extract_version(value, "IIS")
+
+        _add(
+            results,
+            seen,
+            name=_technology_name("Microsoft IIS", version),
+            category="web-server",
+            detected_from="server-header",
+        )
+
+    # Caddy
+    if "caddy" in lower:
+        version = _extract_version(value, "Caddy")
+
+        _add(
+            results,
+            seen,
+            name=_technology_name("Caddy", version),
+            category="web-server",
+            detected_from="server-header",
+        )
+
+
+def _detect_powered_by(
+    powered_by: str,
+    results: list[Technology],
+    seen: set[tuple[str, str]],
+) -> None:
+    """
+    Detect technologies from X-Powered-By.
+    """
+
+    value = _normalize(powered_by)
+
+    if not value:
+        return
+
+    lower = value.lower()
+
+    # PHP
+    if "php" in lower:
+        version = _extract_version(value, "PHP")
+
+        _add(
+            results,
+            seen,
+            name=_technology_name("PHP", version),
+            category="runtime",
+            detected_from="x-powered-by",
+        )
+
+    # Express
+    if "express" in lower:
+        _add(
+            results,
+            seen,
+            name="Express",
+            category="framework",
+            detected_from="x-powered-by",
+        )
+
+    # ASP.NET
+    if "asp.net" in lower:
+        _add(
+            results,
+            seen,
+            name="ASP.NET",
+            category="framework",
+            detected_from="x-powered-by",
+        )
+
+    # Node.js
+    if "node" in lower or "node.js" in lower:
+        _add(
+            results,
+            seen,
+            name="Node.js",
+            category="runtime",
+            detected_from="x-powered-by",
+        )
+
+
+def _detect_banner(
+    banner: str,
+    results: list[Technology],
+    seen: set[tuple[str, str]],
+) -> None:
+    """
+    Detect technologies from service banners.
+    """
+
+    value = _normalize(banner)
+
+    if not value:
+        return
+
+    lower = value.lower()
+
+    # OpenSSH
+    if "openssh" in lower:
         match = re.search(
-            r"openssh[_/\s-]*([0-9][\w.-]*)",
-            combined,
+            r"OpenSSH[_/\s-]*"
+            r"([0-9]+(?:\.[0-9]+)+(?:p[0-9]+)?)",
+            value,
             re.IGNORECASE,
         )
 
-        name = "OpenSSH"
+        version = match.group(1) if match else None
 
-        if match:
-            name = f"OpenSSH {match.group(1)}"
-
-        add_technology(
-            name,
-            "remote-access",
-            "banner",
+        _add(
+            results,
+            seen,
+            name=_technology_name("OpenSSH", version),
+            category="remote-access",
+            detected_from="banner",
         )
 
     # Apache
-    if "apache" in combined_lower:
-        match = re.search(
-            r"apache/([0-9][\w.-]*)",
-            combined,
-            re.IGNORECASE,
+    if "apache/" in lower or "apache " in lower:
+        version = _extract_version(value, "Apache")
+
+        _add(
+            results,
+            seen,
+            name=_technology_name("Apache", version),
+            category="web-server",
+            detected_from="banner",
         )
 
-        name = "Apache"
+    # nginx
+    if "nginx/" in lower:
+        version = _extract_version(value, "nginx")
 
-        if match:
-            name = f"Apache {match.group(1)}"
-
-        add_technology(
-            name,
-            "web-server",
-            "banner",
+        _add(
+            results,
+            seen,
+            name=_technology_name("Nginx", version),
+            category="web-server",
+            detected_from="banner",
         )
 
-    # Nginx
-    if "nginx" in combined_lower:
-        match = re.search(
-            r"nginx/([0-9][\w.-]*)",
-            combined,
-            re.IGNORECASE,
+    # IIS
+    if "microsoft-iis" in lower:
+        _add(
+            results,
+            seen,
+            name="Microsoft IIS",
+            category="web-server",
+            detected_from="banner",
         )
 
-        name = "Nginx"
 
-        if match:
-            name = f"Nginx {match.group(1)}"
+def _detect_html(
+    html_body: str,
+    title: str | None,
+    results: list[Technology],
+    seen: set[tuple[str, str]],
+) -> None:
+    """
+    Detect common web technologies from HTML.
 
-        add_technology(
-            name,
-            "web-server",
-            "banner",
+    This uses simple signatures rather than executing JavaScript.
+    """
+
+    body = _normalize(html_body)
+
+    if not body:
+        return
+
+    lower = body.lower()
+
+    normalized_title = _lower(title)
+
+    # WordPress
+    wordpress_signatures = (
+        "wp-content/",
+        "wp-includes/",
+        "wordpress",
+        "wp-json",
+    )
+
+    if any(
+        signature in lower
+        for signature in wordpress_signatures
+    ):
+        _add(
+            results,
+            seen,
+            name="WordPress",
+            category="cms",
+            detected_from="html",
         )
 
-    # Node.js / Express
-    if "node.js" in combined_lower or "nodejs" in combined_lower:
-        add_technology(
-            "Node.js",
-            "runtime",
-            "banner",
+    # React
+    react_signatures = (
+        "reactroot",
+        "__reactfiber",
+        "data-reactroot",
+        "react-dom",
+    )
+
+    if any(
+        signature in lower
+        for signature in react_signatures
+    ):
+        _add(
+            results,
+            seen,
+            name="React",
+            category="frontend",
+            detected_from="html",
         )
 
-    if "express" in combined_lower:
-        add_technology(
-            "Express",
-            "web-framework",
-            "banner",
+    # Next.js
+    next_signatures = (
+        "__next_data__",
+        "/_next/",
+        "__next_f",
+    )
+
+    if any(
+        signature in lower
+        for signature in next_signatures
+    ):
+        _add(
+            results,
+            seen,
+            name="Next.js",
+            category="framework",
+            detected_from="html",
         )
 
-    # PHP
-    if re.search(r"\bphp\b", combined_lower):
-        add_technology(
-            "PHP",
-            "runtime",
-            "banner",
+        _add(
+            results,
+            seen,
+            name="React",
+            category="frontend",
+            detected_from="html",
         )
 
-    # Python
-    if re.search(r"\bpython\b", combined_lower):
-        add_technology(
-            "Python",
-            "runtime",
-            "banner",
+    # jQuery
+    if re.search(
+        r"(?:jquery(?:[-.]|\s)|jquery\.min\.js)",
+        lower,
+    ):
+        _add(
+            results,
+            seen,
+            name="jQuery",
+            category="javascript-library",
+            detected_from="html",
+        )
+
+    # Bootstrap
+    if (
+        "bootstrap.min.css" in lower
+        or "bootstrap.css" in lower
+        or "bootstrap.min.js" in lower
+        or "bootstrap.js" in lower
+        or "bootstrap" in normalized_title
+    ):
+        _add(
+            results,
+            seen,
+            name="Bootstrap",
+            category="frontend-framework",
+            detected_from="html",
         )
 
     # Django
-    if "django" in combined_lower:
-        add_technology(
-            "Django",
-            "web-framework",
-            "banner",
-        )
-
-    # WordPress
-    if "wordpress" in combined_lower:
-        add_technology(
-            "WordPress",
-            "cms",
-            "banner",
-        )
-
-    # MySQL
-    if "mysql" in combined_lower:
-        add_technology(
-            "MySQL",
-            "database",
-            "banner",
-        )
-
-    # PostgreSQL
-    if "postgresql" in combined_lower:
-        add_technology(
-            "PostgreSQL",
-            "database",
-            "banner",
-        )
-
-    # Redis
-    if "redis" in combined_lower:
-        add_technology(
-            "Redis",
-            "database",
-            "banner",
-        )
-
-    # HTTP metadata
-    if http_details:
-        server = str(
-            http_details.get("server") or ""
-        )
-
-        content_type = str(
-            http_details.get("content_type") or ""
-        )
-
-        allow = str(
-            http_details.get("allow") or ""
-        )
-
-        http_combined = (
-            f"{server} "
-            f"{content_type} "
-            f"{allow}"
-        ).lower()
-
-        if "apache" in http_combined:
-            match = re.search(
-                r"apache/([0-9][\w.-]*)",
-                server,
-                re.IGNORECASE,
-            )
-
-            name = "Apache"
-
-            if match:
-                name = f"Apache {match.group(1)}"
-
-            add_technology(
-                name,
-                "web-server",
-                "http-header",
-            )
-
-        if "nginx" in http_combined:
-            match = re.search(
-                r"nginx/([0-9][\w.-]*)",
-                server,
-                re.IGNORECASE,
-            )
-
-            name = "Nginx"
-
-            if match:
-                name = f"Nginx {match.group(1)}"
-
-            add_technology(
-                name,
-                "web-server",
-                "http-header",
-            )
-
-        if "php" in http_combined:
-            add_technology(
-                "PHP",
-                "runtime",
-                "http-header",
-            )
-
-        if "wordpress" in http_combined:
-            add_technology(
-                "WordPress",
-                "cms",
-                "http-header",
-            )
-
-    # Service-based fallback
-    if service_lower == "ssh" and not any(
-        item["category"] == "remote-access"
-        for item in technologies
+    if (
+        "csrfmiddlewaretoken" in lower
+        or "django" in lower
     ):
-        add_technology(
-            "SSH",
-            "remote-access",
-            "service",
+        _add(
+            results,
+            seen,
+            name="Django",
+            category="framework",
+            detected_from="html",
         )
 
-    if service_lower in {"http", "https"} and not any(
-        item["category"] == "web-server"
-        for item in technologies
+    # Flask
+    if "flask" in lower:
+        _add(
+            results,
+            seen,
+            name="Flask",
+            category="framework",
+            detected_from="html",
+        )
+
+    # Laravel
+    if (
+        "laravel" in lower
+        or "laravel_session" in lower
     ):
-        add_technology(
-            "HTTP",
-            "web",
-            "service",
+        _add(
+            results,
+            seen,
+            name="Laravel",
+            category="framework",
+            detected_from="html",
         )
 
-    return technologies
+
+def fingerprint_technology(
+    *,
+    service: str | None = None,
+    version: str | None = None,
+    banner: str | None = None,
+    http_details: dict[str, Any] | None = None,
+) -> list[Technology]:
+    """
+    Fingerprint technologies using passive service and HTTP evidence.
+
+    Sources include:
+
+    - service identification
+    - service version
+    - network banner
+    - HTTP Server header
+    - X-Powered-By
+    - HTTP headers
+    - HTML response body
+    - HTML title
+
+    Returns a list of dictionaries containing:
+
+        name
+        category
+        detected_from
+    """
+
+    results: list[Technology] = []
+    seen: set[tuple[str, str]] = set()
+
+    service_name = _normalize(service)
+    service_lower = service_name.lower()
+
+    service_version = _normalize(version)
+
+    banner_value = _normalize(banner)
+
+    http = http_details or {}
+
+    # ---------------------------------------------------------
+    # Service-level detection
+    # ---------------------------------------------------------
+
+    if service_lower == "ssh":
+        if service_version and service_version != "unknown":
+            _add(
+                results,
+                seen,
+                name=f"OpenSSH {service_version}",
+                category="remote-access",
+                detected_from="service-version",
+            )
+        elif "openssh" in banner_value.lower():
+            _detect_banner(
+                banner_value,
+                results,
+                seen,
+            )
+
+    if service_lower == "http":
+        if (
+            service_version
+            and service_version != "unknown"
+            and "apache" in service_version.lower()
+        ):
+            _add(
+                results,
+                seen,
+                name=f"Apache {service_version.split()[-1]}",
+                category="web-server",
+                detected_from="service-version",
+            )
+
+    # ---------------------------------------------------------
+    # Banner detection
+    # ---------------------------------------------------------
+
+    _detect_banner(
+        banner_value,
+        results,
+        seen,
+    )
+
+    # ---------------------------------------------------------
+    # HTTP detection
+    # ---------------------------------------------------------
+
+    if http:
+        server = http.get("server")
+
+        if server:
+            _detect_server_header(
+                str(server),
+                results,
+                seen,
+            )
+
+        powered_by = (
+            http.get("x-powered-by")
+            or http.get("X-Powered-By")
+        )
+
+        headers = http.get("headers")
+
+        if isinstance(headers, dict):
+            powered_by = (
+                powered_by
+                or headers.get("x-powered-by")
+                or headers.get("X-Powered-By")
+            )
+
+            server = (
+                server
+                or headers.get("server")
+                or headers.get("Server")
+            )
+
+            if server:
+                _detect_server_header(
+                    str(server),
+                    results,
+                    seen,
+                )
+
+        if powered_by:
+            _detect_powered_by(
+                str(powered_by),
+                results,
+                seen,
+            )
+
+        # -----------------------------------------------------
+        # Optional HTML body/title
+        # -----------------------------------------------------
+
+        body = (
+            http.get("body")
+            or http.get("html")
+            or http.get("content")
+        )
+
+        title = http.get("title")
+
+        if body:
+            _detect_html(
+                str(body),
+                str(title) if title else None,
+                results,
+                seen,
+            )
+
+    return results

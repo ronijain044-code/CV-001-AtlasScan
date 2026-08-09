@@ -1042,7 +1042,10 @@ def main():
 
     banner()
 
-    ports = parse_ports(ports_spec)
+    try:
+        ports = parse_ports(ports_spec)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     console.print(
         f"\n[bold cyan]Target:[/bold cyan] {args.target}"

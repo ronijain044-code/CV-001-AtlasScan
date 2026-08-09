@@ -18,6 +18,7 @@ class ScanResult:
         default_factory=dict
     )
     dns: dict[str, Any] = field(default_factory=dict)
+    subdomains: list[str] = field(default_factory=list)
     workers: int = 100
     timeout: float = 1.0
     duration_seconds: float = 0.0
@@ -68,12 +69,17 @@ class ScanResult:
 
         return count
 
+    @property
+    def subdomain_count(self) -> int:
+        return len(self.subdomains)
+
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
 
         data["open_port_count"] = self.open_port_count
         data["technology_count"] = self.technology_count
         data["dns_record_count"] = self.dns_record_count
+        data["subdomain_count"] = self.subdomain_count
 
         return data
 

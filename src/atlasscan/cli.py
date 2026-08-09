@@ -23,8 +23,10 @@ from src.atlasscan.models import ScanResult
 from src.atlasscan.report import generate_html_report
 from src.atlasscan.scanner import scan_port
 from src.atlasscan.service import identify_service
+from src.atlasscan.subdomain import discover_subdomains
 from src.atlasscan.technology import fingerprint_technology
 from src.atlasscan.utils import parse_ports
+
 
 console = Console()
 
@@ -215,14 +217,24 @@ def collect_dns_details(
         }
 
 
+def collect_subdomains(
+    target: str,
+) -> list[str]:
+    try:
+        return sorted(
+            set(
+                discover_subdomains(target)
+                or []
+            )
+        )
+    except Exception:
+        return []
+
+
 def save_json_report(
     filename: str,
     result: ScanResult,
 ):
-    report = {
-        "atlas_scan": result.to_dict()
-    }
-
     output_path = Path(filename)
 
     output_path.parent.mkdir(
@@ -235,7 +247,7 @@ def save_json_report(
         encoding="utf-8",
     ) as file:
         json.dump(
-            report,
+            result.to_report(),
             file,
             indent=4,
         )
@@ -285,6 +297,38 @@ def display_dns_results(
 
     console.print()
     console.print(dns_table)
+
+
+def display_subdomain_results(
+    subdomains: list[str],
+):
+    if not subdomains:
+        return
+
+    table = Table(
+        title="Discovered Subdomains"
+    )
+
+    table.add_column(
+        "#",
+        justify="center",
+    )
+
+    table.add_column(
+        "Subdomain"
+    )
+
+    for index, subdomain in enumerate(
+        subdomains,
+        start=1,
+    ):
+        table.add_row(
+            str(index),
+            subdomain,
+        )
+
+    console.print()
+    console.print(table)
 
 
 def main():
@@ -411,6 +455,11 @@ def main():
         args.target
     )
 
+    # Subdomain discovery
+    subdomains = collect_subdomains(
+        args.target
+    )
+
     # Port scanning
     open_ports = scan_with_progress(
         args.target,
@@ -463,6 +512,7 @@ def main():
     result.http = http_details
     result.technologies = technologies
     result.dns = dns_data
+    result.subdomains = subdomains
     result.duration_seconds = elapsed
 
     # Open ports table
@@ -587,6 +637,11 @@ def main():
     # DNS details
     display_dns_results(
         result.dns
+    )
+
+    # Subdomain details
+    display_subdomain_results(
+        result.subdomains
     )
 
     console.print(

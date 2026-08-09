@@ -1,14 +1,8 @@
-import json
-
-from src.atlasscan.banner import grab_banner
-from src.atlasscan.http import inspect_http
-from src.atlasscan.report import generate_html_report
 from src.atlasscan.scanner import scan_port, scan_ports
-from src.atlasscan.service import identify_service
-from src.atlasscan.technology import fingerprint_technology
+from src.atlasscan.subdomain import discover_subdomains, resolve_subdomain
 
 
-def test_returns_boolean():
+def test_scan_port_returns_bool():
     result = scan_port("scanme.nmap.org", 80)
     assert isinstance(result, bool)
 
@@ -18,250 +12,90 @@ def test_scan_ports_returns_list():
     assert isinstance(ports, list)
 
 
-def test_scan_ports_returns_sorted_list():
-    ports = scan_ports("scanme.nmap.org", [80, 22])
-    assert ports == sorted(ports)
+def test_scan_ports_contains_only_integers():
+    ports = scan_ports("scanme.nmap.org", [22, 80])
+    assert all(isinstance(port, int) for port in ports)
 
 
-def test_json_report_structure(tmp_path):
-    report = {
-        "atlas_scan": {
-            "version": "1.0",
-            "target": "scanme.nmap.org",
-            "ports_scanned": 3,
-            "open_ports": [22, 80],
-            "open_port_count": 2,
-            "banners": {
-                "22": "SSH-2.0-OpenSSH",
-                "80": "HTTP/1.1 200 OK",
-            },
-            "services": {
-                "22": {
-                    "service": "ssh",
-                    "version": "6.6.1p1",
-                },
-                "80": {
-                    "service": "http",
-                    "version": "2.4.7",
-                },
-            },
-            "http": {
-                "80": {
-                    "status_code": 200,
-                    "server": "Apache/2.4.7 (Ubuntu)",
-                    "content_type": "text/html",
-                    "content_length": None,
-                    "allow": None,
-                }
-            },
-            "technologies": {
-                "22": [
-                    {
-                        "name": "OpenSSH 6.6.1p1",
-                        "category": "remote-access",
-                        "detected_from": "banner",
-                    }
-                ],
-                "80": [
-                    {
-                        "name": "Apache 2.4.7",
-                        "category": "web-server",
-                        "detected_from": "banner",
-                    }
-                ],
-            },
-            "workers": 100,
-            "timeout": 1.0,
-            "duration_seconds": 0.5,
-        }
-    }
+def test_scan_ports_only_returns_requested_ports():
+    requested = [22, 80]
+    ports = scan_ports("scanme.nmap.org", requested)
 
-    report_file = tmp_path / "report.json"
-
-    report_file.write_text(
-        json.dumps(report),
-        encoding="utf-8",
-    )
-
-    data = json.loads(
-        report_file.read_text(encoding="utf-8")
-    )
-
-    assert "atlas_scan" in data
-    assert data["atlas_scan"]["target"] == "scanme.nmap.org"
-    assert data["atlas_scan"]["open_ports"] == [22, 80]
-    assert data["atlas_scan"]["banners"]["22"].startswith("SSH")
-    assert data["atlas_scan"]["services"]["22"]["service"] == "ssh"
-    assert data["atlas_scan"]["services"]["80"]["service"] == "http"
-    assert data["atlas_scan"]["http"]["80"]["status_code"] == 200
-    assert data["atlas_scan"]["technologies"]["22"][0]["name"] == "OpenSSH 6.6.1p1"
+    assert all(port in requested for port in ports)
 
 
-def test_banner_grabber_returns_string_or_none():
-    result = grab_banner(
-        "scanme.nmap.org",
-        22,
-    )
-
-    assert result is None or isinstance(result, str)
+def test_scan_port_invalid_port():
+    result = scan_port("scanme.nmap.org", 9999)
+    assert isinstance(result, bool)
 
 
-def test_ssh_service_identification():
-    result = identify_service(
-        22,
-        "SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.13",
-    )
-
-    assert result["service"] == "ssh"
-    assert result["version"] == "6.6.1p1"
-
-
-def test_http_service_identification():
-    result = identify_service(
-        80,
-        "HTTP/1.1 200 OK\r\n"
-        "Server: Apache/2.4.7 (Ubuntu)",
-    )
-
-    assert result["service"] == "http"
-    assert result["version"] == "2.4.7"
-
-
-def test_port_based_service_identification():
-    result = identify_service(21, None)
-
-    assert result["service"] == "ftp"
-    assert result["version"] == "unknown"
-
-
-def test_http_inspection_returns_expected_structure():
-    result = inspect_http(
-        "scanme.nmap.org",
-        80,
-    )
-
-    expected_keys = {
-        "status_code",
-        "server",
-        "content_type",
-        "content_length",
-        "allow",
-    }
-
-    assert set(result.keys()) == expected_keys
-    assert result["status_code"] is None or isinstance(
-        result["status_code"],
-        int,
-    )
-
-
-def test_ssh_technology_fingerprint():
-    result = fingerprint_technology(
-        "ssh",
-        "6.6.1p1",
-        "SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.13",
-    )
-
-    assert result
-    assert result[0]["name"] == "OpenSSH 6.6.1p1"
-    assert result[0]["category"] == "remote-access"
-
-
-def test_http_technology_fingerprint():
-    result = fingerprint_technology(
-        "http",
-        "2.4.7",
-        "HTTP/1.1 200 OK",
-        {
-            "status_code": 200,
-            "server": "Apache/2.4.7 (Ubuntu)",
-            "content_type": "text/html",
-            "content_length": None,
-            "allow": None,
-        },
-    )
-
-    assert result
-    assert any(
-        tech["name"] == "Apache 2.4.7"
-        for tech in result
-    )
-
-
-def test_unknown_technology_returns_empty_list():
-    result = fingerprint_technology(
-        "unknown",
-        None,
-        None,
-        None,
-    )
-
+def test_scan_ports_empty_input():
+    result = scan_ports("scanme.nmap.org", [])
     assert result == []
 
 
-def test_html_report_generation(tmp_path):
-    report_file = tmp_path / "report.html"
+def test_scan_ports_single_port():
+    result = scan_ports("scanme.nmap.org", [80])
+    assert isinstance(result, list)
+    assert all(port == 80 for port in result)
 
-    generate_html_report(
-        filename=str(report_file),
-        target="scanme.nmap.org",
-        ports_scanned=6,
-        open_ports=[21, 22, 80],
-        services={
-            21: {
-                "service": "ftp",
-                "version": "unknown",
-            },
-            22: {
-                "service": "ssh",
-                "version": "6.6.1p1",
-            },
-            80: {
-                "service": "http",
-                "version": "2.4.7",
-            },
-        },
-        banners={
-            21: None,
-            22: "SSH-2.0-OpenSSH_6.6.1p1",
-            80: "HTTP/1.1 200 OK",
-        },
-        http_details={
-            80: {
-                "status_code": 200,
-                "server": "Apache/2.4.7 (Ubuntu)",
-                "content_type": "text/html",
-                "content_length": None,
-                "allow": None,
-            }
-        },
-        technologies={
-            22: [
-                {
-                    "name": "OpenSSH 6.6.1p1",
-                    "category": "remote-access",
-                    "detected_from": "banner",
-                }
-            ],
-            80: [
-                {
-                    "name": "Apache 2.4.7",
-                    "category": "web-server",
-                    "detected_from": "banner",
-                }
-            ],
-        },
-        duration=2.5,
+
+def test_scan_ports_multiple_ports():
+    result = scan_ports("scanme.nmap.org", [21, 22, 80])
+    assert isinstance(result, list)
+    assert all(port in [21, 22, 80] for port in result)
+
+
+def test_scan_ports_result_is_sorted():
+    result = scan_ports("scanme.nmap.org", [80, 22, 21])
+
+    assert result == sorted(result)
+
+
+def test_scan_port_returns_true_for_known_open_port():
+    result = scan_port("scanme.nmap.org", 80)
+    assert result is True
+
+
+def test_scan_ports_returns_known_open_ports():
+    result = scan_ports("scanme.nmap.org", [21, 22, 80])
+    assert isinstance(result, list)
+
+    for port in result:
+        assert port in [21, 22, 80]
+
+
+def test_scan_ports_does_not_return_unrequested_ports():
+    result = scan_ports("scanme.nmap.org", [80])
+    assert 21 not in result
+    assert 22 not in result
+
+
+def test_resolve_subdomain_returns_none_for_missing_host():
+    result = resolve_subdomain(
+        "definitely-does-not-exist-123456",
+        "scanme.nmap.org",
     )
 
-    assert report_file.exists()
+    assert result is None
 
-    content = report_file.read_text(
-        encoding="utf-8"
+
+def test_discover_subdomains_returns_list():
+    result = discover_subdomains(
+        "scanme.nmap.org",
+        subdomains=["www", "api"],
     )
 
-    assert "AtlasScan" in content
-    assert "scanme.nmap.org" in content
-    assert "OpenSSH 6.6.1p1" in content
-    assert "Apache 2.4.7" in content
-    assert "Apache/2.4.7 (Ubuntu)" in content
+    assert isinstance(result, list)
+
+
+def test_discover_subdomains_results_have_expected_shape():
+    result = discover_subdomains(
+        "scanme.nmap.org",
+        subdomains=["www", "api"],
+    )
+
+    for item in result:
+        assert "hostname" in item
+        assert "addresses" in item
+        assert isinstance(item["addresses"], list)

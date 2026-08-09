@@ -21,18 +21,16 @@ def generate_html_report(
     http_details: dict[int, dict[str, str | int | None]] | None = None,
     technologies: dict[int, list[dict[str, str]]] | None = None,
     dns: dict | None = None,
+    subdomains: list[str] | None = None,
     duration: float | None = None,
 ) -> None:
     """
     Generate a professional HTML report.
 
-    Supports both the new ScanResult-based API and the
-    legacy keyword-based API for backward compatibility.
+    Supports both the ScanResult-based API and the
+    legacy keyword-based API.
     """
 
-    # ---------------------------------------------------------
-    # Backward-compatible legacy API
-    # ---------------------------------------------------------
     if result is None:
         result = ScanResult.create(
             target=target or "Unknown",
@@ -47,11 +45,9 @@ def generate_html_report(
         result.http = http_details or {}
         result.technologies = technologies or {}
         result.dns = dns or {}
+        result.subdomains = subdomains or []
         result.duration_seconds = duration or 0.0
 
-    # ---------------------------------------------------------
-    # Output path
-    # ---------------------------------------------------------
     output_path = Path(filename)
 
     output_path.parent.mkdir(
@@ -59,9 +55,7 @@ def generate_html_report(
         exist_ok=True,
     )
 
-    # ---------------------------------------------------------
-    # Open port rows
-    # ---------------------------------------------------------
+    # Open ports
     rows = []
 
     for port in result.open_ports:
@@ -112,9 +106,7 @@ def generate_html_report(
             """
         )
 
-    # ---------------------------------------------------------
-    # HTTP rows
-    # ---------------------------------------------------------
+    # HTTP
     http_rows = []
 
     for port, details in result.http.items():
@@ -141,9 +133,7 @@ def generate_html_report(
             """
         )
 
-    # ---------------------------------------------------------
-    # Technology cards
-    # ---------------------------------------------------------
+    # Technologies
     technology_cards = []
 
     for port, technologies_for_port in result.technologies.items():
@@ -192,14 +182,11 @@ def generate_html_report(
             """
         )
 
-    # ---------------------------------------------------------
-    # DNS rows
-    # ---------------------------------------------------------
+    # DNS
     dns_rows = []
 
     dns_data = result.dns or {}
 
-    # A records
     for address in dns_data.get("a", []):
         dns_rows.append(
             f"""
@@ -212,7 +199,6 @@ def generate_html_report(
             """
         )
 
-    # AAAA records
     for address in dns_data.get("aaaa", []):
         dns_rows.append(
             f"""
@@ -225,8 +211,10 @@ def generate_html_report(
             """
         )
 
-    # PTR records
-    for ip_address, hostnames in dns_data.get("ptr", {}).items():
+    for ip_address, hostnames in dns_data.get(
+        "ptr",
+        {},
+    ).items():
         for hostname in hostnames:
             dns_rows.append(
                 f"""
@@ -252,18 +240,41 @@ def generate_html_report(
             """
         )
 
-    # ---------------------------------------------------------
-    # Profile
-    # ---------------------------------------------------------
+    # Subdomains
+    subdomain_rows = []
+
+    for index, subdomain in enumerate(
+        result.subdomains,
+        start=1,
+    ):
+        subdomain_rows.append(
+            f"""
+            <tr>
+                <td>{_escape(index)}</td>
+                <td class="dns-value">
+                    {_escape(subdomain)}
+                </td>
+            </tr>
+            """
+        )
+
+    if not subdomain_rows:
+        subdomain_rows.append(
+            """
+            <tr>
+                <td colspan="2" class="empty">
+                    No subdomains discovered
+                </td>
+            </tr>
+            """
+        )
+
     profile_text = (
         result.profile
         if result.profile
         else "Manual configuration"
     )
 
-    # ---------------------------------------------------------
-    # HTML document
-    # ---------------------------------------------------------
     html_document = f"""<!DOCTYPE html>
 <html lang="en">
 
@@ -298,10 +309,8 @@ def generate_html_report(
         body {{
             margin: 0;
             padding: 0;
-
             background: var(--background);
             color: var(--text);
-
             font-family:
                 Inter,
                 ui-sans-serif,
@@ -320,26 +329,21 @@ def generate_html_report(
 
         .hero {{
             padding: 32px;
-
             border: 1px solid var(--border);
             border-radius: 18px;
-
             background:
                 linear-gradient(
                     135deg,
                     #111a2e,
                     #0e1526
                 );
-
             margin-bottom: 24px;
         }}
 
         .brand {{
             color: var(--accent);
-
             font-size: 14px;
             font-weight: 800;
-
             letter-spacing: 2px;
             text-transform: uppercase;
         }}
@@ -356,38 +360,31 @@ def generate_html_report(
 
         .stats {{
             display: grid;
-
             grid-template-columns:
                 repeat(
                     auto-fit,
                     minmax(180px, 1fr)
                 );
-
             gap: 16px;
             margin-bottom: 24px;
         }}
 
         .stat {{
             padding: 22px;
-
             background: var(--surface);
-
             border: 1px solid var(--border);
             border-radius: 14px;
         }}
 
         .stat-label {{
             color: var(--muted);
-
             font-size: 13px;
-
             text-transform: uppercase;
             letter-spacing: 1px;
         }}
 
         .stat-value {{
             margin-top: 8px;
-
             font-size: 28px;
             font-weight: 800;
         }}
@@ -395,12 +392,9 @@ def generate_html_report(
         .section {{
             margin-top: 24px;
             padding: 24px;
-
             background: var(--surface);
-
             border: 1px solid var(--border);
             border-radius: 16px;
-
             overflow-x: auto;
         }}
 
@@ -411,27 +405,21 @@ def generate_html_report(
 
         table {{
             width: 100%;
-
             border-collapse: collapse;
-
-            min-width: 800px;
+            min-width: 700px;
         }}
 
         th,
         td {{
             padding: 13px 14px;
-
             border-bottom: 1px solid var(--border);
-
             text-align: left;
             vertical-align: top;
         }}
 
         th {{
             color: var(--muted);
-
             font-size: 12px;
-
             text-transform: uppercase;
             letter-spacing: 1px;
         }}
@@ -443,56 +431,45 @@ def generate_html_report(
 
         .banner {{
             max-width: 520px;
-
             white-space: pre-wrap;
             word-break: break-word;
-
             color: #c8d5ed;
-
             font-family:
                 "JetBrains Mono",
                 "Fira Code",
                 monospace;
-
             font-size: 12px;
         }}
 
         .dns-value {{
             word-break: break-word;
-
             font-family:
                 "JetBrains Mono",
                 "Fira Code",
                 monospace;
-
             font-size: 13px;
         }}
 
         .tech-grid {{
             display: grid;
-
             grid-template-columns:
                 repeat(
                     auto-fit,
                     minmax(240px, 1fr)
                 );
-
             gap: 14px;
         }}
 
         .tech-card {{
             padding: 18px;
-
             border: 1px solid var(--border);
             border-radius: 12px;
-
             background: var(--surface-light);
         }}
 
         .tech-name {{
             font-size: 17px;
             font-weight: 800;
-
             color: var(--accent);
         }}
 
@@ -500,27 +477,20 @@ def generate_html_report(
         .tech-source,
         .tech-port {{
             margin-top: 8px;
-
             color: var(--muted);
-
             font-size: 13px;
         }}
 
         .empty {{
             color: var(--muted);
-
             text-align: center;
-
             padding: 24px;
         }}
 
         footer {{
             margin-top: 30px;
-
             color: var(--muted);
-
             text-align: center;
-
             font-size: 13px;
         }}
     </style>
@@ -530,9 +500,7 @@ def generate_html_report(
 
     <main class="container">
 
-        <!-- Hero -->
         <section class="hero">
-
             <div class="brand">
                 AtlasScan
             </div>
@@ -547,62 +515,59 @@ def generate_html_report(
                     {_escape(result.target)}
                 </strong>
             </div>
-
         </section>
 
-
-        <!-- Statistics -->
         <section class="stats">
 
             <div class="stat">
                 <div class="stat-label">
                     Open Ports
                 </div>
-
                 <div class="stat-value">
                     {_escape(result.open_port_count)}
                 </div>
             </div>
 
-
             <div class="stat">
                 <div class="stat-label">
                     Ports Scanned
                 </div>
-
                 <div class="stat-value">
                     {_escape(result.ports_scanned)}
                 </div>
             </div>
 
-
             <div class="stat">
                 <div class="stat-label">
                     Technologies
                 </div>
-
                 <div class="stat-value">
                     {_escape(result.technology_count)}
                 </div>
             </div>
 
-
             <div class="stat">
                 <div class="stat-label">
                     DNS Records
                 </div>
-
                 <div class="stat-value">
                     {_escape(result.dns_record_count)}
                 </div>
             </div>
 
+            <div class="stat">
+                <div class="stat-label">
+                    Subdomains
+                </div>
+                <div class="stat-value">
+                    {_escape(result.subdomain_count)}
+                </div>
+            </div>
 
             <div class="stat">
                 <div class="stat-label">
                     Duration
                 </div>
-
                 <div class="stat-value">
                     {_escape(
                         f"{result.duration_seconds:.2f}s"
@@ -610,12 +575,10 @@ def generate_html_report(
                 </div>
             </div>
 
-
             <div class="stat">
                 <div class="stat-label">
                     Profile
                 </div>
-
                 <div class="stat-value">
                     {_escape(profile_text)}
                 </div>
@@ -623,8 +586,6 @@ def generate_html_report(
 
         </section>
 
-
-        <!-- Open Ports -->
         <section class="section">
 
             <h2>
@@ -632,9 +593,7 @@ def generate_html_report(
             </h2>
 
             <table>
-
                 <thead>
-
                     <tr>
                         <th>Port</th>
                         <th>Status</th>
@@ -643,20 +602,15 @@ def generate_html_report(
                         <th>Technologies</th>
                         <th>Banner</th>
                     </tr>
-
                 </thead>
-
 
                 <tbody>
                     {"".join(rows)}
                 </tbody>
-
             </table>
 
         </section>
 
-
-        <!-- HTTP Details -->
         <section class="section">
 
             <h2>
@@ -664,9 +618,7 @@ def generate_html_report(
             </h2>
 
             <table>
-
                 <thead>
-
                     <tr>
                         <th>Port</th>
                         <th>Status</th>
@@ -674,20 +626,15 @@ def generate_html_report(
                         <th>Content-Type</th>
                         <th>Content-Length</th>
                     </tr>
-
                 </thead>
-
 
                 <tbody>
                     {"".join(http_rows)}
                 </tbody>
-
             </table>
 
         </section>
 
-
-        <!-- DNS Records -->
         <section class="section">
 
             <h2>
@@ -695,27 +642,41 @@ def generate_html_report(
             </h2>
 
             <table>
-
                 <thead>
-
                     <tr>
                         <th>Type</th>
                         <th>Value</th>
                     </tr>
-
                 </thead>
-
 
                 <tbody>
                     {"".join(dns_rows)}
                 </tbody>
-
             </table>
 
         </section>
 
+        <section class="section">
 
-        <!-- Technology Fingerprints -->
+            <h2>
+                Discovered Subdomains
+            </h2>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Subdomain</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    {"".join(subdomain_rows)}
+                </tbody>
+            </table>
+
+        </section>
+
         <section class="section">
 
             <h2>
@@ -728,16 +689,10 @@ def generate_html_report(
 
         </section>
 
-
-        <!-- Footer -->
         <footer>
-
             Generated by AtlasScan v1.0
-
             &bull;
-
             {_escape(result.timestamp)}
-
         </footer>
 
     </main>
@@ -747,9 +702,6 @@ def generate_html_report(
 </html>
 """
 
-    # ---------------------------------------------------------
-    # Write report
-    # ---------------------------------------------------------
     output_path.write_text(
         html_document,
         encoding="utf-8",

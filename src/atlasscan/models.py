@@ -22,6 +22,7 @@ class ScanResult:
     web_paths: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     robots: dict[int, dict[str, Any]] = field(default_factory=dict)
     vulnerabilities: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    unified_risk: dict[str, Any] = field(default_factory=dict)
     workers: int = 100
     timeout: float = 1.0
     duration_seconds: float = 0.0
@@ -270,6 +271,7 @@ class ScanResult:
             "vulnerability_high_count": self.vulnerability_high_count,
             "vulnerability_medium_count": self.vulnerability_medium_count,
             "vulnerability_low_count": self.vulnerability_low_count,
+            "unified_risk": self.unified_risk,
         }
 
     def to_report(self) -> dict[str, Any]:

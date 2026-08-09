@@ -21,6 +21,7 @@ from src.atlasscan.dns import resolve_dns
 from src.atlasscan.http import inspect_http
 from src.atlasscan.models import ScanResult
 from src.atlasscan.report import generate_html_report
+from src.atlasscan.risk import calculate_unified_risk
 from src.atlasscan.scanner import scan_port
 from src.atlasscan.security import analyze_security_headers
 from src.atlasscan.service import identify_service
@@ -1099,6 +1100,14 @@ def main():
     result.web_paths = web_paths
     result.security = security_details
     result.vulnerabilities = vulnerabilities
+
+    # Unified risk assessment
+    unified_risk = calculate_unified_risk(
+    security=result.security,
+    vulnerabilities=result.vulnerabilities,
+    )
+
+    result.unified_risk = unified_risk
 
     result.duration_seconds = elapsed
 

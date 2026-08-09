@@ -21,11 +21,36 @@ def _severity_counts() -> dict[str, int]:
 
 
 def _extract_observations(
-    data: dict[int, dict[str, Any]] | None,
+    data: dict[int, Any] | None,
     key: str,
 ) -> list[dict[str, Any]]:
     """
-    Extract findings/observations from a port-keyed result structure.
+    Extract observations/findings from a port-keyed result structure.
+
+    Supports both formats:
+
+    Security:
+        {
+            80: {
+                "observations": [...]
+            }
+        }
+
+    Vulnerabilities:
+        {
+            80: [
+                {...},
+                {...}
+            ]
+        }
+
+    Also supports the wrapped format:
+
+        {
+            80: {
+                "findings": [...]
+            }
+        }
     """
 
     if not data:
@@ -34,17 +59,35 @@ def _extract_observations(
     observations: list[dict[str, Any]] = []
 
     for details in data.values():
-        if not isinstance(details, dict):
+
+        # -----------------------------------------------------
+        # Format 1:
+        # port -> list of findings
+        # Used by ScanResult.vulnerabilities
+        # -----------------------------------------------------
+        if isinstance(details, list):
+            for item in details:
+                if isinstance(item, dict):
+                    observations.append(item)
+
             continue
 
-        items = details.get(key, [])
+        # -----------------------------------------------------
+        # Format 2:
+        # port -> {"observations": [...]}
+        # or
+        # port -> {"findings": [...]}
+        # -----------------------------------------------------
+        if isinstance(details, dict):
 
-        if not isinstance(items, list):
-            continue
+            items = details.get(key, [])
 
-        for item in items:
-            if isinstance(item, dict):
-                observations.append(item)
+            if not isinstance(items, list):
+                continue
+
+            for item in items:
+                if isinstance(item, dict):
+                    observations.append(item)
 
     return observations
 

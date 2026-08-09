@@ -26,6 +26,11 @@ from src.atlasscan.service import identify_service
 from src.atlasscan.subdomain import discover_subdomains
 from src.atlasscan.technology import fingerprint_technology
 from src.atlasscan.utils import parse_ports
+from src.atlasscan.web import (
+    check_robots,
+    discover_common_paths,
+    inspect_web,
+)
 
 
 console = Console()
@@ -163,6 +168,7 @@ def collect_http_details(
     with ThreadPoolExecutor(
         max_workers=min(10, len(http_ports))
     ) as executor:
+
         futures = {
             executor.submit(
                 inspect_http,
@@ -229,6 +235,137 @@ def collect_subdomains(
         )
     except Exception:
         return []
+
+
+def collect_web_details(
+    target: str,
+    http_ports: list[int],
+    timeout: float = 3.0,
+) -> dict[int, dict]:
+    """
+    Perform deeper web reconnaissance against detected HTTP/HTTPS ports.
+    """
+    if not http_ports:
+        return {}
+
+    results: dict[int, dict] = {}
+
+    workers = max(1, min(10, len(http_ports)))
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(
+                inspect_web,
+                target,
+                port,
+                timeout,
+            ): port
+            for port in http_ports
+        }
+
+        for future in as_completed(futures):
+            port = futures[future]
+
+            try:
+                results[port] = future.result()
+            except Exception as exc:
+                results[port] = {
+                    "status_code": None,
+                    "url": None,
+                    "final_url": None,
+                    "title": None,
+                    "server": None,
+                    "content_type": None,
+                    "content_length": None,
+                    "allow": None,
+                    "location": None,
+                    "redirect": False,
+                    "headers": {},
+                    "security_headers": {},
+                    "error": str(exc),
+                }
+
+    return dict(sorted(results.items()))
+
+
+def collect_robots_details(
+    target: str,
+    http_ports: list[int],
+    timeout: float = 3.0,
+) -> dict[int, dict]:
+    """
+    Check robots.txt on detected HTTP/HTTPS ports.
+    """
+    if not http_ports:
+        return {}
+
+    results: dict[int, dict] = {}
+
+    workers = max(1, min(10, len(http_ports)))
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(
+                check_robots,
+                target,
+                port,
+                timeout,
+            ): port
+            for port in http_ports
+        }
+
+        for future in as_completed(futures):
+            port = futures[future]
+
+            try:
+                results[port] = future.result()
+            except Exception as exc:
+                results[port] = {
+                    "url": None,
+                    "status_code": None,
+                    "exists": False,
+                    "content": None,
+                    "error": str(exc),
+                }
+
+    return dict(sorted(results.items()))
+
+
+def collect_web_paths(
+    target: str,
+    http_ports: list[int],
+    timeout: float = 3.0,
+) -> dict[int, list[dict]]:
+    """
+    Discover a small set of common web paths.
+    """
+    if not http_ports:
+        return {}
+
+    results: dict[int, list[dict]] = {}
+
+    workers = max(1, min(10, len(http_ports)))
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(
+                discover_common_paths,
+                target,
+                port,
+                timeout,
+            ): port
+            for port in http_ports
+        }
+
+        for future in as_completed(futures):
+            port = futures[future]
+
+            try:
+                results[port] = future.result() or []
+            except Exception:
+                results[port] = []
+
+    return dict(sorted(results.items()))
 
 
 def save_json_report(
@@ -326,6 +463,193 @@ def display_subdomain_results(
             str(index),
             subdomain,
         )
+
+    console.print()
+    console.print(table)
+
+
+def display_web_results(
+    web_data: dict[int, dict],
+):
+    if not web_data:
+        return
+
+    table = Table(
+        title="Web Inspection"
+    )
+
+    table.add_column(
+        "Port",
+        justify="center",
+    )
+
+    table.add_column(
+        "Status",
+        justify="center",
+    )
+
+    table.add_column(
+        "Title",
+    )
+
+    table.add_column(
+        "Server",
+    )
+
+    table.add_column(
+        "Content-Type",
+    )
+
+    table.add_column(
+        "Redirect",
+        justify="center",
+    )
+
+    for port, details in web_data.items():
+        status = details.get("status_code")
+
+        table.add_row(
+            str(port),
+            str(status or "Unknown"),
+            str(details.get("title") or "Unknown"),
+            str(details.get("server") or "Unknown"),
+            str(details.get("content_type") or "Unknown"),
+            "Yes" if details.get("redirect") else "No",
+        )
+
+    console.print()
+    console.print(table)
+
+
+def display_security_headers(
+    web_data: dict[int, dict],
+):
+    if not web_data:
+        return
+
+    table = Table(
+        title="Security Headers"
+    )
+
+    table.add_column(
+        "Port",
+        justify="center",
+    )
+
+    table.add_column(
+        "Header",
+    )
+
+    table.add_column(
+        "Value",
+    )
+
+    found = False
+
+    for port, details in web_data.items():
+        security_headers = details.get(
+            "security_headers",
+            {},
+        )
+
+        for header, value in security_headers.items():
+            if value:
+                found = True
+
+                table.add_row(
+                    str(port),
+                    header,
+                    str(value),
+                )
+
+    if found:
+        console.print()
+        console.print(table)
+
+
+def display_robots_results(
+    robots_data: dict[int, dict],
+):
+    if not robots_data:
+        return
+
+    table = Table(
+        title="Robots.txt"
+    )
+
+    table.add_column(
+        "Port",
+        justify="center",
+    )
+
+    table.add_column(
+        "Status",
+        justify="center",
+    )
+
+    table.add_column(
+        "Exists",
+        justify="center",
+    )
+
+    table.add_column(
+        "URL",
+    )
+
+    for port, details in robots_data.items():
+        table.add_row(
+            str(port),
+            str(details.get("status_code") or "Unknown"),
+            "Yes" if details.get("exists") else "No",
+            str(details.get("url") or "Unknown"),
+        )
+
+    console.print()
+    console.print(table)
+
+
+def display_web_path_results(
+    web_paths: dict[int, list[dict]],
+):
+    if not web_paths:
+        return
+
+    table = Table(
+        title="Discovered Web Paths"
+    )
+
+    table.add_column(
+        "Port",
+        justify="center",
+    )
+
+    table.add_column(
+        "Path",
+    )
+
+    table.add_column(
+        "Status",
+        justify="center",
+    )
+
+    table.add_column(
+        "Content-Type",
+    )
+
+    for port, paths in web_paths.items():
+        for path_info in paths:
+            table.add_row(
+                str(port),
+                str(path_info.get("path") or "/"),
+                str(
+                    path_info.get("status_code")
+                    or "Unknown"
+                ),
+                str(
+                    path_info.get("content_type")
+                    or "Unknown"
+                ),
+            )
 
     console.print()
     console.print(table)
@@ -450,17 +774,23 @@ def main():
 
     start_time = time.perf_counter()
 
+    # ---------------------------------------------------------
     # DNS reconnaissance
+    # ---------------------------------------------------------
     dns_data = collect_dns_details(
         args.target
     )
 
+    # ---------------------------------------------------------
     # Subdomain discovery
+    # ---------------------------------------------------------
     subdomains = collect_subdomains(
         args.target
     )
 
+    # ---------------------------------------------------------
     # Port scanning
+    # ---------------------------------------------------------
     open_ports = scan_with_progress(
         args.target,
         ports,
@@ -468,26 +798,34 @@ def main():
         workers=workers,
     )
 
+    # ---------------------------------------------------------
     # Service banners
+    # ---------------------------------------------------------
     banners = collect_banners(
         args.target,
         open_ports,
     )
 
+    # ---------------------------------------------------------
     # Service identification
+    # ---------------------------------------------------------
     services = build_service_results(
         open_ports,
         banners,
     )
 
+    # ---------------------------------------------------------
     # HTTP inspection
+    # ---------------------------------------------------------
     http_details = collect_http_details(
         args.target,
         open_ports,
         banners,
     )
 
+    # ---------------------------------------------------------
     # Technology fingerprinting
+    # ---------------------------------------------------------
     technologies = build_technology_results(
         open_ports,
         banners,
@@ -495,9 +833,48 @@ def main():
         http_details,
     )
 
+    # ---------------------------------------------------------
+    # Determine HTTP/HTTPS ports
+    # ---------------------------------------------------------
+    http_ports = sorted(
+        port
+        for port in open_ports
+        if services.get(port, {}).get("service")
+        in {"http", "https"}
+    )
+
+    # ---------------------------------------------------------
+    # Deep web inspection
+    # ---------------------------------------------------------
+    web_details = collect_web_details(
+        args.target,
+        http_ports,
+        timeout=max(3.0, timeout),
+    )
+
+    # ---------------------------------------------------------
+    # robots.txt
+    # ---------------------------------------------------------
+    robots_details = collect_robots_details(
+        args.target,
+        http_ports,
+        timeout=max(3.0, timeout),
+    )
+
+    # ---------------------------------------------------------
+    # Common web paths
+    # ---------------------------------------------------------
+    web_paths = collect_web_paths(
+        args.target,
+        http_ports,
+        timeout=max(3.0, timeout),
+    )
+
     elapsed = time.perf_counter() - start_time
 
+    # ---------------------------------------------------------
     # Unified result model
+    # ---------------------------------------------------------
     result = ScanResult.create(
         target=args.target,
         ports_scanned=len(ports),
@@ -513,9 +890,17 @@ def main():
     result.technologies = technologies
     result.dns = dns_data
     result.subdomains = subdomains
+
+    # New web reconnaissance data
+    result.web = web_details
+    result.robots = robots_details
+    result.web_paths = web_paths
+
     result.duration_seconds = elapsed
 
+    # ---------------------------------------------------------
     # Open ports table
+    # ---------------------------------------------------------
     table = Table(
         title="Open Ports"
     )
@@ -582,7 +967,9 @@ def main():
     console.print()
     console.print(table)
 
+    # ---------------------------------------------------------
     # HTTP details
+    # ---------------------------------------------------------
     if result.http:
         http_table = Table(
             title="HTTP Details"
@@ -634,21 +1021,59 @@ def main():
         console.print()
         console.print(http_table)
 
+    # ---------------------------------------------------------
     # DNS details
+    # ---------------------------------------------------------
     display_dns_results(
         result.dns
     )
 
+    # ---------------------------------------------------------
     # Subdomain details
+    # ---------------------------------------------------------
     display_subdomain_results(
         result.subdomains
     )
 
+    # ---------------------------------------------------------
+    # Deep web inspection
+    # ---------------------------------------------------------
+    display_web_results(
+        result.web
+    )
+
+    # ---------------------------------------------------------
+    # Security headers
+    # ---------------------------------------------------------
+    display_security_headers(
+        result.web
+    )
+
+    # ---------------------------------------------------------
+    # robots.txt
+    # ---------------------------------------------------------
+    display_robots_results(
+        result.robots
+    )
+
+    # ---------------------------------------------------------
+    # Common web paths
+    # ---------------------------------------------------------
+    display_web_path_results(
+        result.web_paths
+    )
+
+    # ---------------------------------------------------------
+    # Completion
+    # ---------------------------------------------------------
     console.print(
         f"\n[bold green]Scan completed in "
         f"{result.duration_seconds:.2f} seconds[/bold green]"
     )
 
+    # ---------------------------------------------------------
+    # JSON report
+    # ---------------------------------------------------------
     if args.json:
         save_json_report(
             filename=args.json,
@@ -660,6 +1085,9 @@ def main():
             f"{args.json}"
         )
 
+    # ---------------------------------------------------------
+    # HTML report
+    # ---------------------------------------------------------
     if args.html:
         generate_html_report(
             filename=args.html,

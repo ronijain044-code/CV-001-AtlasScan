@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import html
 from pathlib import Path
+from typing import Any
 
 from src.atlasscan.models import ScanResult
 
@@ -9,6 +12,36 @@ def _escape(value: object) -> str:
     return html.escape(str(value))
 
 
+def _format_value(value: object) -> str:
+    if value is None:
+        return "Unknown"
+
+    if value is True:
+        return "Yes"
+
+    if value is False:
+        return "No"
+
+    return str(value)
+
+
+def _technology_names(
+    technologies: list[dict[str, Any]],
+) -> str:
+    if not technologies:
+        return "Unknown"
+
+    names = []
+
+    for technology in technologies:
+        name = technology.get("name")
+
+        if name:
+            names.append(str(name))
+
+    return ", ".join(names) if names else "Unknown"
+
+
 def generate_html_report(
     filename: str,
     result: ScanResult | None = None,
@@ -16,19 +49,29 @@ def generate_html_report(
     target: str | None = None,
     ports_scanned: int | None = None,
     open_ports: list[int] | None = None,
-    services: dict[int, dict[str, str]] | None = None,
+    services: dict[int, dict[str, Any]] | None = None,
     banners: dict[int, str | None] | None = None,
-    http_details: dict[int, dict[str, str | int | None]] | None = None,
-    technologies: dict[int, list[dict[str, str]]] | None = None,
-    dns: dict | None = None,
+    http_details: dict[int, dict[str, Any]] | None = None,
+    technologies: dict[int, list[dict[str, Any]]] | None = None,
+    dns: dict[str, Any] | None = None,
     subdomains: list[str] | None = None,
     duration: float | None = None,
 ) -> None:
     """
-    Generate a professional HTML report.
+    Generate a professional AtlasScan HTML report.
 
-    Supports both the ScanResult-based API and the
-    legacy keyword-based API.
+    Supports:
+    - ScanResult-based API
+    - Legacy keyword-based API
+    - Port/service information
+    - HTTP information
+    - Technology fingerprints
+    - DNS records
+    - Subdomains
+    - Web inspection
+    - Security headers
+    - robots.txt
+    - Common web paths
     """
 
     if result is None:
@@ -55,654 +98,1205 @@ def generate_html_report(
         exist_ok=True,
     )
 
-    # Open ports
-    rows = []
+    html_parts: list[str] = []
 
-    for port in result.open_ports:
-        service = result.services.get(
-            port,
-            {},
-        )
-
-        technologies_for_port = result.technologies.get(
-            port,
-            [],
-        )
-
-        technology_names = ", ".join(
-            tech.get("name", "Unknown")
-            for tech in technologies_for_port
-        )
-
-        if not technology_names:
-            technology_names = "Unknown"
-
-        banner = result.banners.get(port)
-
-        if not banner:
-            banner = "No banner"
-
-        rows.append(
-            f"""
-            <tr>
-                <td>{_escape(port)}</td>
-                <td class="open">OPEN</td>
-                <td>{_escape(service.get("service", "unknown"))}</td>
-                <td>{_escape(service.get("version", "unknown"))}</td>
-                <td>{_escape(technology_names)}</td>
-                <td class="banner">{_escape(banner)}</td>
-            </tr>
-            """
-        )
-
-    if not rows:
-        rows.append(
-            """
-            <tr>
-                <td colspan="6" class="empty">
-                    No open ports discovered
-                </td>
-            </tr>
-            """
-        )
-
-    # HTTP
-    http_rows = []
-
-    for port, details in result.http.items():
-        http_rows.append(
-            f"""
-            <tr>
-                <td>{_escape(port)}</td>
-                <td>{_escape(details.get("status_code", "Unknown"))}</td>
-                <td>{_escape(details.get("server", "Unknown"))}</td>
-                <td>{_escape(details.get("content_type", "Unknown"))}</td>
-                <td>{_escape(details.get("content_length", "Unknown"))}</td>
-            </tr>
-            """
-        )
-
-    if not http_rows:
-        http_rows.append(
-            """
-            <tr>
-                <td colspan="5" class="empty">
-                    No HTTP services detected
-                </td>
-            </tr>
-            """
-        )
-
-    # Technologies
-    technology_cards = []
-
-    for port, technologies_for_port in result.technologies.items():
-        for technology in technologies_for_port:
-            technology_cards.append(
-                f"""
-                <div class="tech-card">
-                    <div class="tech-name">
-                        {_escape(technology.get("name", "Unknown"))}
-                    </div>
-
-                    <div class="tech-category">
-                        Category:
-                        {_escape(
-                            technology.get(
-                                "category",
-                                "Unknown",
-                            )
-                        )}
-                    </div>
-
-                    <div class="tech-source">
-                        Detected from:
-                        {_escape(
-                            technology.get(
-                                "detected_from",
-                                "Unknown",
-                            )
-                        )}
-                    </div>
-
-                    <div class="tech-port">
-                        Port:
-                        {_escape(port)}
-                    </div>
-                </div>
-                """
-            )
-
-    if not technology_cards:
-        technology_cards.append(
-            """
-            <div class="empty">
-                No technologies detected
-            </div>
-            """
-        )
-
-    # DNS
-    dns_rows = []
-
-    dns_data = result.dns or {}
-
-    for address in dns_data.get("a", []):
-        dns_rows.append(
-            f"""
-            <tr>
-                <td>A</td>
-                <td class="dns-value">
-                    {_escape(address)}
-                </td>
-            </tr>
-            """
-        )
-
-    for address in dns_data.get("aaaa", []):
-        dns_rows.append(
-            f"""
-            <tr>
-                <td>AAAA</td>
-                <td class="dns-value">
-                    {_escape(address)}
-                </td>
-            </tr>
-            """
-        )
-
-    for ip_address, hostnames in dns_data.get(
-        "ptr",
-        {},
-    ).items():
-        for hostname in hostnames:
-            dns_rows.append(
-                f"""
-                <tr>
-                    <td>PTR</td>
-                    <td class="dns-value">
-                        {_escape(ip_address)}
-                        &rarr;
-                        {_escape(hostname)}
-                    </td>
-                </tr>
-                """
-            )
-
-    if not dns_rows:
-        dns_rows.append(
-            """
-            <tr>
-                <td colspan="2" class="empty">
-                    No DNS records detected
-                </td>
-            </tr>
-            """
-        )
-
-    # Subdomains
-    subdomain_rows = []
-
-    for index, subdomain in enumerate(
-        result.subdomains,
-        start=1,
-    ):
-        subdomain_rows.append(
-            f"""
-            <tr>
-                <td>{_escape(index)}</td>
-                <td class="dns-value">
-                    {_escape(subdomain)}
-                </td>
-            </tr>
-            """
-        )
-
-    if not subdomain_rows:
-        subdomain_rows.append(
-            """
-            <tr>
-                <td colspan="2" class="empty">
-                    No subdomains discovered
-                </td>
-            </tr>
-            """
-        )
-
-    profile_text = (
-        result.profile
-        if result.profile
-        else "Manual configuration"
-    )
-
-    html_document = f"""<!DOCTYPE html>
+    html_parts.append(
+        """<!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <meta charset="UTF-8">
+<meta charset="UTF-8">
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0">
 
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
+<title>AtlasScan Report - %s</title>
 
-    <title>
-        AtlasScan Report - {_escape(result.target)}
-    </title>
+<style>
 
-    <style>
-        :root {{
-            --background: #0b1020;
-            --surface: #121a2b;
-            --surface-light: #19243a;
-            --border: #263653;
-            --text: #e8eefc;
-            --muted: #8d9ab3;
-            --accent: #54d6ff;
-            --success: #44e38a;
-        }}
+* {
+    box-sizing: border-box;
+}
 
-        * {{
-            box-sizing: border-box;
-        }}
+body {
+    margin: 0;
+    padding: 0;
+    background: #f4f7fb;
+    color: #172033;
+    font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        Roboto,
+        Arial,
+        sans-serif;
+}
 
-        body {{
-            margin: 0;
-            padding: 0;
-            background: var(--background);
-            color: var(--text);
-            font-family:
-                Inter,
-                ui-sans-serif,
-                system-ui,
-                -apple-system,
-                BlinkMacSystemFont,
-                "Segoe UI",
-                sans-serif;
-        }}
+.container {
+    width: min(1200px, 94%%);
+    margin: 40px auto;
+}
 
-        .container {{
-            width: min(1400px, 94%);
-            margin: 0 auto;
-            padding: 40px 0 60px;
-        }}
+.header {
+    background: #172033;
+    color: white;
+    padding: 32px;
+    border-radius: 16px;
+    margin-bottom: 24px;
+}
 
-        .hero {{
-            padding: 32px;
-            border: 1px solid var(--border);
-            border-radius: 18px;
-            background:
-                linear-gradient(
-                    135deg,
-                    #111a2e,
-                    #0e1526
-                );
-            margin-bottom: 24px;
-        }}
+.header h1 {
+    margin: 0 0 8px 0;
+    font-size: 32px;
+}
 
-        .brand {{
-            color: var(--accent);
-            font-size: 14px;
-            font-weight: 800;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-        }}
+.header p {
+    margin: 4px 0;
+    color: #c9d2e3;
+}
 
-        h1 {{
-            margin: 8px 0;
-            font-size: clamp(30px, 5vw, 52px);
-        }}
+.section {
+    background: white;
+    border-radius: 14px;
+    padding: 24px;
+    margin-bottom: 24px;
+    box-shadow:
+        0 4px 18px rgba(20, 30, 50, 0.07);
+}
 
-        .target {{
-            color: var(--muted);
-            font-size: 18px;
-        }}
+.section h2 {
+    margin-top: 0;
+    margin-bottom: 18px;
+    font-size: 22px;
+}
 
-        .stats {{
-            display: grid;
-            grid-template-columns:
-                repeat(
-                    auto-fit,
-                    minmax(180px, 1fr)
-                );
-            gap: 16px;
-            margin-bottom: 24px;
-        }}
+.stats {
+    display: grid;
+    grid-template-columns:
+        repeat(auto-fit, minmax(150px, 1fr));
+    gap: 14px;
+}
 
-        .stat {{
-            padding: 22px;
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 14px;
-        }}
+.stat {
+    background: #f5f7fb;
+    border-radius: 12px;
+    padding: 18px;
+}
 
-        .stat-label {{
-            color: var(--muted);
-            font-size: 13px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }}
+.stat-value {
+    font-size: 28px;
+    font-weight: 700;
+}
 
-        .stat-value {{
-            margin-top: 8px;
-            font-size: 28px;
-            font-weight: 800;
-        }}
+.stat-label {
+    color: #697386;
+    margin-top: 4px;
+}
 
-        .section {{
-            margin-top: 24px;
-            padding: 24px;
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            overflow-x: auto;
-        }}
+table {
+    width: 100%%;
+    border-collapse: collapse;
+    overflow: hidden;
+}
 
-        h2 {{
-            margin-top: 0;
-            font-size: 21px;
-        }}
+th {
+    background: #eef2f7;
+    text-align: left;
+    padding: 12px;
+    font-size: 13px;
+}
 
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            min-width: 700px;
-        }}
+td {
+    padding: 12px;
+    border-bottom: 1px solid #e6eaf0;
+    vertical-align: top;
+}
 
-        th,
-        td {{
-            padding: 13px 14px;
-            border-bottom: 1px solid var(--border);
-            text-align: left;
-            vertical-align: top;
-        }}
+tr:last-child td {
+    border-bottom: none;
+}
 
-        th {{
-            color: var(--muted);
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }}
+.badge {
+    display: inline-block;
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: #e8f7ee;
+    color: #187443;
+    font-size: 12px;
+    font-weight: 700;
+}
 
-        .open {{
-            color: var(--success);
-            font-weight: 800;
-        }}
+.badge-muted {
+    background: #eef1f5;
+    color: #667085;
+}
 
-        .banner {{
-            max-width: 520px;
-            white-space: pre-wrap;
-            word-break: break-word;
-            color: #c8d5ed;
-            font-family:
-                "JetBrains Mono",
-                "Fira Code",
-                monospace;
-            font-size: 12px;
-        }}
+.code {
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #101828;
+    color: #e6edf5;
+    padding: 14px;
+    border-radius: 9px;
+    font-family:
+        "SFMono-Regular",
+        Consolas,
+        monospace;
+    font-size: 12px;
+}
 
-        .dns-value {{
-            word-break: break-word;
-            font-family:
-                "JetBrains Mono",
-                "Fira Code",
-                monospace;
-            font-size: 13px;
-        }}
+.empty {
+    color: #667085;
+    padding: 12px 0;
+}
 
-        .tech-grid {{
-            display: grid;
-            grid-template-columns:
-                repeat(
-                    auto-fit,
-                    minmax(240px, 1fr)
-                );
-            gap: 14px;
-        }}
+.security-present {
+    color: #187443;
+    font-weight: 700;
+}
 
-        .tech-card {{
-            padding: 18px;
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            background: var(--surface-light);
-        }}
+.security-missing {
+    color: #b42318;
+    font-weight: 700;
+}
 
-        .tech-name {{
-            font-size: 17px;
-            font-weight: 800;
-            color: var(--accent);
-        }}
+.footer {
+    text-align: center;
+    color: #667085;
+    padding: 20px;
+    font-size: 13px;
+}
 
-        .tech-category,
-        .tech-source,
-        .tech-port {{
-            margin-top: 8px;
-            color: var(--muted);
-            font-size: 13px;
-        }}
+@media (max-width: 700px) {
 
-        .empty {{
-            color: var(--muted);
-            text-align: center;
-            padding: 24px;
-        }}
+    .container {
+        width: 94%%;
+        margin: 20px auto;
+    }
 
-        footer {{
-            margin-top: 30px;
-            color: var(--muted);
-            text-align: center;
-            font-size: 13px;
-        }}
-    </style>
+    .section {
+        padding: 16px;
+    }
+
+    table {
+        display: block;
+        overflow-x: auto;
+    }
+
+}
+
+</style>
 </head>
 
 <body>
 
-    <main class="container">
+<div class="container">
+"""
+        % _escape(result.target)
+    )
 
-        <section class="hero">
-            <div class="brand">
-                AtlasScan
+    # ---------------------------------------------------------
+    # Header
+    # ---------------------------------------------------------
+
+    html_parts.append(
+        f"""
+<div class="header">
+
+    <h1>AtlasScan</h1>
+
+    <p>
+        Professional Network Reconnaissance Report
+    </p>
+
+    <p>
+        Target:
+        <strong>{_escape(result.target)}</strong>
+    </p>
+
+    <p>
+        Profile:
+        <strong>
+            {_escape(result.profile or "Manual configuration")}
+        </strong>
+    </p>
+
+    <p>
+        Generated:
+        {_escape(result.timestamp)}
+    </p>
+
+</div>
+"""
+    )
+
+    # ---------------------------------------------------------
+    # Summary
+    # ---------------------------------------------------------
+
+    html_parts.append(
+        f"""
+<div class="section">
+
+    <h2>Scan Summary</h2>
+
+    <div class="stats">
+
+        <div class="stat">
+            <div class="stat-value">
+                {result.ports_scanned}
             </div>
-
-            <h1>
-                Network Reconnaissance Report
-            </h1>
-
-            <div class="target">
-                Target:
-                <strong>
-                    {_escape(result.target)}
-                </strong>
+            <div class="stat-label">
+                Ports Scanned
             </div>
-        </section>
+        </div>
 
-        <section class="stats">
-
-            <div class="stat">
-                <div class="stat-label">
-                    Open Ports
-                </div>
-                <div class="stat-value">
-                    {_escape(result.open_port_count)}
-                </div>
+        <div class="stat">
+            <div class="stat-value">
+                {result.open_port_count}
             </div>
-
-            <div class="stat">
-                <div class="stat-label">
-                    Ports Scanned
-                </div>
-                <div class="stat-value">
-                    {_escape(result.ports_scanned)}
-                </div>
-            </div>
-
-            <div class="stat">
-                <div class="stat-label">
-                    Technologies
-                </div>
-                <div class="stat-value">
-                    {_escape(result.technology_count)}
-                </div>
-            </div>
-
-            <div class="stat">
-                <div class="stat-label">
-                    DNS Records
-                </div>
-                <div class="stat-value">
-                    {_escape(result.dns_record_count)}
-                </div>
-            </div>
-
-            <div class="stat">
-                <div class="stat-label">
-                    Subdomains
-                </div>
-                <div class="stat-value">
-                    {_escape(result.subdomain_count)}
-                </div>
-            </div>
-
-            <div class="stat">
-                <div class="stat-label">
-                    Duration
-                </div>
-                <div class="stat-value">
-                    {_escape(
-                        f"{result.duration_seconds:.2f}s"
-                    )}
-                </div>
-            </div>
-
-            <div class="stat">
-                <div class="stat-label">
-                    Profile
-                </div>
-                <div class="stat-value">
-                    {_escape(profile_text)}
-                </div>
-            </div>
-
-        </section>
-
-        <section class="section">
-
-            <h2>
+            <div class="stat-label">
                 Open Ports
-            </h2>
-
-            <table>
-                <thead>
-                    <tr>
-                        <th>Port</th>
-                        <th>Status</th>
-                        <th>Service</th>
-                        <th>Version</th>
-                        <th>Technologies</th>
-                        <th>Banner</th>
-                    </tr>
-                </thead>
-
-                <tbody>
-                    {"".join(rows)}
-                </tbody>
-            </table>
-
-        </section>
-
-        <section class="section">
-
-            <h2>
-                HTTP Details
-            </h2>
-
-            <table>
-                <thead>
-                    <tr>
-                        <th>Port</th>
-                        <th>Status</th>
-                        <th>Server</th>
-                        <th>Content-Type</th>
-                        <th>Content-Length</th>
-                    </tr>
-                </thead>
-
-                <tbody>
-                    {"".join(http_rows)}
-                </tbody>
-            </table>
-
-        </section>
-
-        <section class="section">
-
-            <h2>
-                DNS Records
-            </h2>
-
-            <table>
-                <thead>
-                    <tr>
-                        <th>Type</th>
-                        <th>Value</th>
-                    </tr>
-                </thead>
-
-                <tbody>
-                    {"".join(dns_rows)}
-                </tbody>
-            </table>
-
-        </section>
-
-        <section class="section">
-
-            <h2>
-                Discovered Subdomains
-            </h2>
-
-            <table>
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Subdomain</th>
-                    </tr>
-                </thead>
-
-                <tbody>
-                    {"".join(subdomain_rows)}
-                </tbody>
-            </table>
-
-        </section>
-
-        <section class="section">
-
-            <h2>
-                Technology Fingerprints
-            </h2>
-
-            <div class="tech-grid">
-                {"".join(technology_cards)}
             </div>
+        </div>
 
-        </section>
+        <div class="stat">
+            <div class="stat-value">
+                {result.technology_count}
+            </div>
+            <div class="stat-label">
+                Technologies
+            </div>
+        </div>
 
-        <footer>
-            Generated by AtlasScan v1.0
-            &bull;
-            {_escape(result.timestamp)}
-        </footer>
+        <div class="stat">
+            <div class="stat-value">
+                {result.dns_record_count}
+            </div>
+            <div class="stat-label">
+                DNS Records
+            </div>
+        </div>
 
-    </main>
+        <div class="stat">
+            <div class="stat-value">
+                {result.subdomain_count}
+            </div>
+            <div class="stat-label">
+                Subdomains
+            </div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-value">
+                {result.web_count}
+            </div>
+            <div class="stat-label">
+                Web Inspections
+            </div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-value">
+                {result.web_path_count}
+            </div>
+            <div class="stat-label">
+                Web Paths
+            </div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-value">
+                {_escape(f"{result.duration_seconds:.2f}s")}
+            </div>
+            <div class="stat-label">
+                Duration
+            </div>
+        </div>
+
+    </div>
+
+</div>
+"""
+    )
+
+    # ---------------------------------------------------------
+    # Open Ports
+    # ---------------------------------------------------------
+
+    html_parts.append(
+        """
+<div class="section">
+
+<h2>Open Ports</h2>
+"""
+    )
+
+    if result.open_ports:
+
+        html_parts.append(
+            """
+<table>
+
+<thead>
+<tr>
+    <th>Port</th>
+    <th>Status</th>
+    <th>Service</th>
+    <th>Version</th>
+    <th>Technologies</th>
+</tr>
+</thead>
+
+<tbody>
+"""
+        )
+
+        for port in result.open_ports:
+
+            service = result.services.get(
+                port,
+                {},
+            )
+
+            technology_list = result.technologies.get(
+                port,
+                [],
+            )
+
+            html_parts.append(
+                f"""
+<tr>
+
+<td>
+    <strong>{_escape(port)}</strong>
+</td>
+
+<td>
+    <span class="badge">
+        OPEN
+    </span>
+</td>
+
+<td>
+    {_escape(service.get("service", "unknown"))}
+</td>
+
+<td>
+    {_escape(service.get("version", "unknown"))}
+</td>
+
+<td>
+    {_escape(
+        _technology_names(technology_list)
+    )}
+</td>
+
+</tr>
+"""
+            )
+
+        html_parts.append(
+            """
+</tbody>
+</table>
+"""
+        )
+
+    else:
+
+        html_parts.append(
+            """
+<div class="empty">
+    No open ports discovered.
+</div>
+"""
+        )
+
+    html_parts.append(
+        """
+</div>
+"""
+    )
+
+    # ---------------------------------------------------------
+    # HTTP Details
+    # ---------------------------------------------------------
+
+    if result.http:
+
+        html_parts.append(
+            """
+<div class="section">
+
+<h2>HTTP Details</h2>
+
+<table>
+
+<thead>
+<tr>
+    <th>Port</th>
+    <th>Status</th>
+    <th>Server</th>
+    <th>Content-Type</th>
+    <th>Content-Length</th>
+    <th>Allow</th>
+</tr>
+</thead>
+
+<tbody>
+"""
+        )
+
+        for port, details in sorted(
+            result.http.items()
+        ):
+
+            html_parts.append(
+                f"""
+<tr>
+
+<td>{_escape(port)}</td>
+
+<td>
+    {_escape(
+        _format_value(
+            details.get("status_code")
+        )
+    )}
+</td>
+
+<td>
+    {_escape(
+        _format_value(
+            details.get("server")
+        )
+    )}
+</td>
+
+<td>
+    {_escape(
+        _format_value(
+            details.get("content_type")
+        )
+    )}
+</td>
+
+<td>
+    {_escape(
+        _format_value(
+            details.get("content_length")
+        )
+    )}
+</td>
+
+<td>
+    {_escape(
+        _format_value(
+            details.get("allow")
+        )
+    )}
+</td>
+
+</tr>
+"""
+            )
+
+        html_parts.append(
+            """
+</tbody>
+</table>
+</div>
+"""
+        )
+
+    # ---------------------------------------------------------
+    # DNS
+    # ---------------------------------------------------------
+
+    if result.dns:
+
+        html_parts.append(
+            """
+<div class="section">
+
+<h2>DNS Records</h2>
+
+<table>
+
+<thead>
+<tr>
+    <th>Type</th>
+    <th>Value</th>
+</tr>
+</thead>
+
+<tbody>
+"""
+        )
+
+        a_records = result.dns.get(
+            "a",
+            [],
+        )
+
+        for value in a_records:
+            html_parts.append(
+                f"""
+<tr>
+    <td><strong>A</strong></td>
+    <td>{_escape(value)}</td>
+</tr>
+"""
+            )
+
+        aaaa_records = result.dns.get(
+            "aaaa",
+            [],
+        )
+
+        for value in aaaa_records:
+            html_parts.append(
+                f"""
+<tr>
+    <td><strong>AAAA</strong></td>
+    <td>{_escape(value)}</td>
+</tr>
+"""
+            )
+
+        ptr_records = result.dns.get(
+            "ptr",
+            {},
+        )
+
+        if isinstance(ptr_records, dict):
+
+            for address, names in ptr_records.items():
+
+                if isinstance(names, list):
+                    for name in names:
+                        html_parts.append(
+                            f"""
+<tr>
+    <td><strong>PTR</strong></td>
+    <td>
+        {_escape(address)}
+        →
+        {_escape(name)}
+    </td>
+</tr>
+"""
+                        )
+
+                else:
+                    html_parts.append(
+                        f"""
+<tr>
+    <td><strong>PTR</strong></td>
+    <td>
+        {_escape(address)}
+        →
+        {_escape(names)}
+    </td>
+</tr>
+"""
+                    )
+
+        html_parts.append(
+            """
+</tbody>
+</table>
+</div>
+"""
+        )
+
+    # ---------------------------------------------------------
+    # Subdomains
+    # ---------------------------------------------------------
+
+    html_parts.append(
+        """
+<div class="section">
+
+<h2>Discovered Subdomains</h2>
+"""
+    )
+
+    if result.subdomains:
+
+        html_parts.append(
+            """
+<table>
+
+<thead>
+<tr>
+    <th>Subdomain</th>
+</tr>
+</thead>
+
+<tbody>
+"""
+        )
+
+        for subdomain in result.subdomains:
+
+            html_parts.append(
+                f"""
+<tr>
+    <td>{_escape(subdomain)}</td>
+</tr>
+"""
+            )
+
+        html_parts.append(
+            """
+</tbody>
+</table>
+"""
+        )
+
+    else:
+
+        html_parts.append(
+            """
+<div class="empty">
+    No subdomains discovered.
+</div>
+"""
+        )
+
+    html_parts.append(
+        """
+</div>
+"""
+    )
+
+    # ---------------------------------------------------------
+    # Web Inspection
+    # ---------------------------------------------------------
+
+    html_parts.append(
+        """
+<div class="section">
+
+<h2>Web Inspection</h2>
+"""
+    )
+
+    if result.web:
+
+        html_parts.append(
+            """
+<table>
+
+<thead>
+<tr>
+    <th>Port</th>
+    <th>Status</th>
+    <th>Title</th>
+    <th>Server</th>
+    <th>Content-Type</th>
+    <th>Redirect</th>
+    <th>Final URL</th>
+</tr>
+</thead>
+
+<tbody>
+"""
+        )
+
+        for port, details in sorted(
+            result.web.items()
+        ):
+
+            html_parts.append(
+                f"""
+<tr>
+
+<td>{_escape(port)}</td>
+
+<td>
+    {_escape(
+        _format_value(
+            details.get("status_code")
+        )
+    )}
+</td>
+
+<td>
+    {_escape(
+        _format_value(
+            details.get("title")
+        )
+    )}
+</td>
+
+<td>
+    {_escape(
+        _format_value(
+            details.get("server")
+        )
+    )}
+</td>
+
+<td>
+    {_escape(
+        _format_value(
+            details.get("content_type")
+        )
+    )}
+</td>
+
+<td>
+    {_escape(
+        _format_value(
+            details.get("redirect")
+        )
+    )}
+</td>
+
+<td>
+    {_escape(
+        _format_value(
+            details.get("final_url")
+        )
+    )}
+</td>
+
+</tr>
+"""
+            )
+
+        html_parts.append(
+            """
+</tbody>
+</table>
+"""
+        )
+
+    else:
+
+        html_parts.append(
+            """
+<div class="empty">
+    No web inspection results.
+</div>
+"""
+        )
+
+    html_parts.append(
+        """
+</div>
+"""
+    )
+
+    # ---------------------------------------------------------
+    # Security Headers
+    # ---------------------------------------------------------
+
+    if result.web:
+
+        html_parts.append(
+            """
+<div class="section">
+
+<h2>Security Headers</h2>
+
+<table>
+
+<thead>
+<tr>
+    <th>Port</th>
+    <th>Header</th>
+    <th>Status</th>
+    <th>Value</th>
+</tr>
+</thead>
+
+<tbody>
+"""
+        )
+
+        for port, details in sorted(
+            result.web.items()
+        ):
+
+            security_headers = details.get(
+                "security_headers",
+                {},
+            )
+
+            if not security_headers:
+                html_parts.append(
+                    f"""
+<tr>
+    <td>{_escape(port)}</td>
+    <td colspan="3">
+        No security header data available.
+    </td>
+</tr>
+"""
+                )
+                continue
+
+            for header, value in security_headers.items():
+
+                present = value is not None
+
+                status = (
+                    "Present"
+                    if present
+                    else "Missing"
+                )
+
+                css_class = (
+                    "security-present"
+                    if present
+                    else "security-missing"
+                )
+
+                html_parts.append(
+                    f"""
+<tr>
+
+<td>{_escape(port)}</td>
+
+<td>
+    {_escape(header)}
+</td>
+
+<td class="{css_class}">
+    {_escape(status)}
+</td>
+
+<td>
+    {_escape(
+        _format_value(value)
+    )}
+</td>
+
+</tr>
+"""
+                )
+
+        html_parts.append(
+            """
+</tbody>
+</table>
+</div>
+"""
+        )
+
+    # ---------------------------------------------------------
+    # Robots.txt
+    # ---------------------------------------------------------
+
+    html_parts.append(
+        """
+<div class="section">
+
+<h2>Robots.txt</h2>
+"""
+    )
+
+    if result.robots:
+
+        html_parts.append(
+            """
+<table>
+
+<thead>
+<tr>
+    <th>Port</th>
+    <th>Status</th>
+    <th>Exists</th>
+    <th>URL</th>
+</tr>
+</thead>
+
+<tbody>
+"""
+        )
+
+        for port, details in sorted(
+            result.robots.items()
+        ):
+
+            exists = bool(
+                details.get("exists")
+            )
+
+            html_parts.append(
+                f"""
+<tr>
+
+<td>{_escape(port)}</td>
+
+<td>
+    {_escape(
+        _format_value(
+            details.get("status_code")
+        )
+    )}
+</td>
+
+<td>
+    <span class="badge{
+        "" if exists else " badge-muted"
+    }">
+        {"Yes" if exists else "No"}
+    </span>
+</td>
+
+<td>
+    {_escape(
+        _format_value(
+            details.get("url")
+        )
+    )}
+</td>
+
+</tr>
+"""
+            )
+
+        html_parts.append(
+            """
+</tbody>
+</table>
+"""
+        )
+
+        for port, details in sorted(
+            result.robots.items()
+        ):
+
+            content = details.get(
+                "content"
+            )
+
+            if content:
+
+                html_parts.append(
+                    f"""
+<h3>
+    robots.txt content — port {_escape(port)}
+</h3>
+
+<div class="code">
+{_escape(content)}
+</div>
+"""
+                )
+
+    else:
+
+        html_parts.append(
+            """
+<div class="empty">
+    No robots.txt results.
+</div>
+"""
+        )
+
+    html_parts.append(
+        """
+</div>
+"""
+    )
+
+    # ---------------------------------------------------------
+    # Web Paths
+    # ---------------------------------------------------------
+
+    html_parts.append(
+        """
+<div class="section">
+
+<h2>Discovered Web Paths</h2>
+"""
+    )
+
+    if result.web_paths:
+
+        html_parts.append(
+            """
+<table>
+
+<thead>
+<tr>
+    <th>Port</th>
+    <th>Path</th>
+    <th>Status</th>
+    <th>Content-Type</th>
+    <th>Content-Length</th>
+</tr>
+</thead>
+
+<tbody>
+"""
+        )
+
+        found_paths = False
+
+        for port, paths in sorted(
+            result.web_paths.items()
+        ):
+
+            for path_info in paths:
+
+                found_paths = True
+
+                html_parts.append(
+                    f"""
+<tr>
+
+<td>{_escape(port)}</td>
+
+<td>
+    {_escape(
+        _format_value(
+            path_info.get("path")
+        )
+    )}
+</td>
+
+<td>
+    {_escape(
+        _format_value(
+            path_info.get("status_code")
+        )
+    )}
+</td>
+
+<td>
+    {_escape(
+        _format_value(
+            path_info.get("content_type")
+        )
+    )}
+</td>
+
+<td>
+    {_escape(
+        _format_value(
+            path_info.get("content_length")
+        )
+    )}
+</td>
+
+</tr>
+"""
+                )
+
+        if not found_paths:
+
+            html_parts.append(
+                """
+<tr>
+    <td colspan="5">
+        No web paths discovered.
+    </td>
+</tr>
+"""
+            )
+
+        html_parts.append(
+            """
+</tbody>
+</table>
+"""
+        )
+
+    else:
+
+        html_parts.append(
+            """
+<div class="empty">
+    No web paths discovered.
+</div>
+"""
+        )
+
+    html_parts.append(
+        """
+</div>
+"""
+    )
+
+    # ---------------------------------------------------------
+    # Banners
+    # ---------------------------------------------------------
+
+    if result.banners:
+
+        html_parts.append(
+            """
+<div class="section">
+
+<h2>Service Banners</h2>
+
+<table>
+
+<thead>
+<tr>
+    <th>Port</th>
+    <th>Banner</th>
+</tr>
+</thead>
+
+<tbody>
+"""
+        )
+
+        for port, banner in sorted(
+            result.banners.items()
+        ):
+
+            if not banner:
+                banner = "No banner"
+
+            html_parts.append(
+                f"""
+<tr>
+
+<td>{_escape(port)}</td>
+
+<td>
+    <div class="code">
+        {_escape(banner)}
+    </div>
+</td>
+
+</tr>
+"""
+            )
+
+        html_parts.append(
+            """
+</tbody>
+</table>
+</div>
+"""
+        )
+
+    # ---------------------------------------------------------
+    # Footer
+    # ---------------------------------------------------------
+
+    html_parts.append(
+        """
+<div class="footer">
+    Generated by AtlasScan
+</div>
+
+</div>
 
 </body>
-
 </html>
 """
+    )
 
     output_path.write_text(
-        html_document,
+        "".join(html_parts),
         encoding="utf-8",
     )

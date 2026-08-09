@@ -3,31 +3,35 @@ from __future__ import annotations
 from typing import Any
 
 
-SECURITY_HEADER_RULES = {
+SECURITY_HEADERS = {
     "Content-Security-Policy": {
         "severity": "high",
         "description": (
             "Content-Security-Policy helps control which resources "
             "a browser is allowed to load."
         ),
+        "weight": 25,
     },
     "Strict-Transport-Security": {
         "severity": "medium",
         "description": (
             "HSTS instructs browsers to use HTTPS for future requests."
         ),
+        "weight": 15,
     },
     "X-Frame-Options": {
         "severity": "medium",
         "description": (
             "X-Frame-Options helps protect against clickjacking."
         ),
+        "weight": 15,
     },
     "X-Content-Type-Options": {
         "severity": "low",
         "description": (
             "X-Content-Type-Options helps prevent MIME-type sniffing."
         ),
+        "weight": 10,
     },
     "Referrer-Policy": {
         "severity": "low",
@@ -35,32 +39,149 @@ SECURITY_HEADER_RULES = {
             "Referrer-Policy controls how much referrer information "
             "is sent with requests."
         ),
+        "weight": 10,
     },
     "Permissions-Policy": {
         "severity": "low",
         "description": (
-            "Permissions-Policy controls access to selected browser "
-            "features."
+            "Permissions-Policy controls access to selected "
+            "browser features."
         ),
+        "weight": 10,
     },
 }
 
 
-def _normalize_headers(headers: dict[str, Any] | None) -> dict[str, str]:
+SEVERITY_ORDER = {
+    "high": 0,
+    "medium": 1,
+    "low": 2,
+}
+
+
+def _normalize_headers(
+    headers: dict[str, Any] | None,
+) -> dict[str, str]:
     """
     Normalize HTTP header names to lowercase.
 
-    This allows security analysis to work with either lowercase
-    or conventional HTTP header capitalization.
+    This allows callers to provide either:
+
+        Content-Security-Policy
+
+    or:
+
+        content-security-policy
     """
+
     if not headers:
         return {}
 
-    return {
-        str(key).lower(): str(value)
-        for key, value in headers.items()
-        if value is not None
+    normalized: dict[str, str] = {}
+
+    for key, value in headers.items():
+        if value is None:
+            continue
+
+        normalized[str(key).lower()] = str(value).strip()
+
+    return normalized
+
+
+def _calculate_grade(score: int) -> str:
+    """
+    Convert a 0-100 security score into a letter grade.
+
+    90-100 -> A
+    80-89  -> B
+    70-79  -> C
+    60-69  -> D
+    0-59   -> F
+    """
+
+    if score >= 90:
+        return "A"
+
+    if score >= 80:
+        return "B"
+
+    if score >= 70:
+        return "C"
+
+    if score >= 60:
+        return "D"
+
+    return "F"
+
+
+def _severity_counts(
+    observations: list[dict[str, Any]],
+) -> dict[str, int]:
+    """
+    Count observations by severity.
+    """
+
+    counts = {
+        "high": 0,
+        "medium": 0,
+        "low": 0,
     }
+
+    for observation in observations:
+        severity = str(
+            observation.get("severity", "")
+        ).lower()
+
+        if severity in counts:
+            counts[severity] += 1
+
+    return counts
+
+
+def _risk_score(
+    observations: list[dict[str, Any]],
+) -> int:
+    """
+    Calculate a 0-100 security score.
+
+    The score starts at 100.
+
+    Each missing security header subtracts its configured
+    weight.
+
+    The result is clamped between 0 and 100.
+    """
+
+    deduction = 0
+
+    for observation in observations:
+        header_name = observation.get(
+            "header"
+        )
+
+        if header_name in SECURITY_HEADERS:
+            deduction += SECURITY_HEADERS[
+                header_name
+            ]["weight"]
+        else:
+            severity = str(
+                observation.get("severity", "")
+            ).lower()
+
+            if severity == "high":
+                deduction += 25
+            elif severity == "medium":
+                deduction += 15
+            elif severity == "low":
+                deduction += 10
+
+    return max(
+        0,
+        min(
+            100,
+            100 - deduction,
+        ),
+    )
 
 
 def analyze_security_headers(
@@ -70,218 +191,164 @@ def analyze_security_headers(
     Analyze common HTTP security headers.
 
     Returns:
-        {
-            "headers": {...},
-            "present_count": int,
-            "missing_count": int,
-            "total_count": int,
-            "missing": [...],
-            "observations": [...]
-        }
+
+        headers
+        present_count
+        missing_count
+        total_count
+        missing
+        observations
+        risk_score
+        grade
+        severity_counts
+        high_count
+        medium_count
+        low_count
+        observation_count
     """
+
     normalized = _normalize_headers(headers)
 
-    header_results: dict[str, dict[str, Any]] = {}
+    analyzed_headers: dict[
+        str,
+        dict[str, Any],
+    ] = {}
+
     missing: list[str] = []
     observations: list[dict[str, Any]] = []
 
-    for header_name, rule in SECURITY_HEADER_RULES.items():
-        value = normalized.get(header_name.lower())
-
-        present = value is not None and value.strip() != ""
-
-        header_results[header_name] = {
-            "present": present,
-            "value": value,
-        }
-
-        if not present:
-            missing.append(header_name)
-
-            observations.append(
-                {
-                    "severity": rule["severity"],
-                    "title": f"Missing {header_name}",
-                    "description": rule["description"],
-                    "evidence": f"{header_name} header was not observed.",
-                }
-            )
-
-    return {
-        "headers": header_results,
-        "present_count": len(SECURITY_HEADER_RULES) - len(missing),
-        "missing_count": len(missing),
-        "total_count": len(SECURITY_HEADER_RULES),
-        "missing": missing,
-        "observations": observations,
-    }
-
-
-def analyze_https(
-    target: str,
-    http_details: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """
-    Analyze basic HTTPS information from existing web inspection data.
-
-    This function does not perform an additional request.
-    """
-    details = http_details or {}
-
-    url = str(details.get("url") or "")
-    final_url = str(details.get("final_url") or "")
-    redirect = bool(details.get("redirect"))
-
-    uses_https = (
-        url.lower().startswith("https://")
-        or final_url.lower().startswith("https://")
-    )
-
-    return {
-        "uses_https": uses_https,
-        "url": url or None,
-        "final_url": final_url or None,
-        "redirect": redirect,
-    }
-
-
-def analyze_cookies(
-    headers: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """
-    Perform a passive analysis of Set-Cookie response headers.
-
-    The function does not modify cookies or send additional requests.
-    """
-    if not headers:
-        return {
-            "cookies": [],
-            "count": 0,
-            "observations": [],
-        }
-
-    cookie_values: list[str] = []
-
-    for key, value in headers.items():
-        if str(key).lower() != "set-cookie":
-            continue
-
-        if isinstance(value, (list, tuple)):
-            cookie_values.extend(str(item) for item in value)
-        elif value is not None:
-            cookie_values.append(str(value))
-
-    cookies: list[dict[str, Any]] = []
-    observations: list[dict[str, Any]] = []
-
-    for raw_cookie in cookie_values:
-        parts = [
-            part.strip()
-            for part in raw_cookie.split(";")
-            if part.strip()
-        ]
-
-        if not parts:
-            continue
-
-        name = parts[0].split("=", 1)[0].strip()
-
-        attributes = {
-            part.split("=", 1)[0].strip().lower()
-            for part in parts[1:]
-        }
-
-        secure = "secure" in attributes
-        httponly = "httponly" in attributes
-        samesite = any(
-            attribute.startswith("samesite")
-            for attribute in attributes
+    for header_name, configuration in SECURITY_HEADERS.items():
+        value = normalized.get(
+            header_name.lower()
         )
 
-        cookie = {
-            "name": name,
-            "secure": secure,
-            "httponly": httponly,
-            "samesite": samesite,
+        present = bool(value)
+
+        analyzed_headers[header_name] = {
+            "present": present,
+            "value": value if present else None,
         }
 
-        cookies.append(cookie)
+        if present:
+            continue
 
-        if not secure:
-            observations.append(
-                {
-                    "severity": "medium",
-                    "title": f"Cookie {name} missing Secure flag",
-                    "description": (
-                        "The cookie was observed without the Secure "
-                        "attribute."
-                    ),
-                    "evidence": raw_cookie,
-                }
-            )
+        missing.append(header_name)
 
-        if not httponly:
-            observations.append(
-                {
-                    "severity": "low",
-                    "title": f"Cookie {name} missing HttpOnly flag",
-                    "description": (
-                        "The cookie was observed without the HttpOnly "
-                        "attribute."
-                    ),
-                    "evidence": raw_cookie,
-                }
-            )
+        observations.append(
+            {
+                "header": header_name,
+                "severity": configuration["severity"],
+                "title": f"Missing {header_name}",
+                "description": configuration["description"],
+                "evidence": (
+                    f"{header_name} header was not observed."
+                ),
+            }
+        )
 
-        if not samesite:
-            observations.append(
-                {
-                    "severity": "low",
-                    "title": f"Cookie {name} missing SameSite attribute",
-                    "description": (
-                        "The cookie was observed without a SameSite "
-                        "attribute."
-                    ),
-                    "evidence": raw_cookie,
-                }
-            )
+    observations.sort(
+        key=lambda item: (
+            SEVERITY_ORDER.get(
+                str(item["severity"]).lower(),
+                99,
+            ),
+            str(item["title"]),
+        )
+    )
+
+    counts = _severity_counts(
+        observations
+    )
+
+    score = _risk_score(
+        observations
+    )
+
+    grade = _calculate_grade(
+        score
+    )
+
+    total_count = len(
+        SECURITY_HEADERS
+    )
+
+    present_count = (
+        total_count
+        - len(missing)
+    )
 
     return {
-        "cookies": cookies,
-        "count": len(cookies),
+        "headers": analyzed_headers,
+        "present_count": present_count,
+        "missing_count": len(missing),
+        "total_count": total_count,
+        "missing": missing,
         "observations": observations,
+        "risk_score": score,
+        "grade": grade,
+        "severity_counts": counts,
+        "high_count": counts["high"],
+        "medium_count": counts["medium"],
+        "low_count": counts["low"],
+        "observation_count": len(observations),
     }
 
 
-def analyze_web_security(
-    web_details: dict[str, Any] | None,
+def summarize_security(
+    security_results: dict[int, dict[str, Any]],
 ) -> dict[str, Any]:
     """
-    Run passive security analysis against an existing web-inspection
-    result.
+    Combine security findings from multiple HTTP ports.
 
-    No exploitation or intrusive requests are performed.
+    Example input:
+
+        {
+            80: {
+                "observations": [...]
+            },
+            443: {
+                "observations": [...]
+            }
+        }
+
+    Returns an overall security assessment.
     """
-    details = web_details or {}
 
-    headers = details.get("headers") or {}
+    all_observations: list[dict[str, Any]] = []
 
-    header_analysis = analyze_security_headers(headers)
-    cookie_analysis = analyze_cookies(headers)
-    https_analysis = analyze_https(
-        target="",
-        http_details=details,
+    for port, result in security_results.items():
+        observations = result.get(
+            "observations",
+            [],
+        )
+
+        for observation in observations:
+            item = dict(observation)
+
+            item["port"] = port
+
+            all_observations.append(item)
+
+    counts = _severity_counts(
+        all_observations
     )
 
-    observations = (
-        header_analysis["observations"]
-        + cookie_analysis["observations"]
+    score = _risk_score(
+        all_observations
+    )
+
+    grade = _calculate_grade(
+        score
     )
 
     return {
-        "security_headers": header_analysis,
-        "cookies": cookie_analysis,
-        "https": https_analysis,
-        "observations": observations,
-        "observation_count": len(observations),
+        "risk_score": score,
+        "grade": grade,
+        "observation_count": len(
+            all_observations
+        ),
+        "high_count": counts["high"],
+        "medium_count": counts["medium"],
+        "low_count": counts["low"],
+        "observations": all_observations,
     }

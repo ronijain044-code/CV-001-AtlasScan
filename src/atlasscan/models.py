@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -10,59 +10,20 @@ class ScanResult:
     target: str
     timestamp: str
     ports_scanned: int
-
-    open_ports: list[int] = field(
-        default_factory=list
-    )
-
-    services: dict[int, dict[str, Any]] = field(
-        default_factory=dict
-    )
-
-    banners: dict[int, str | None] = field(
-        default_factory=dict
-    )
-
-    http: dict[int, dict[str, Any]] = field(
-        default_factory=dict
-    )
-
-    technologies: dict[
-        int,
-        list[dict[str, Any]]
-    ] = field(
-        default_factory=dict
-    )
-
-    dns: dict[str, Any] = field(
-        default_factory=dict
-    )
-
-    subdomains: list[str] = field(
-        default_factory=list
-    )
-
-    web: dict[int, dict[str, Any]] = field(
-        default_factory=dict
-    )
-
-    robots: dict[int, dict[str, Any]] = field(
-        default_factory=dict
-    )
-
-    web_paths: dict[
-        int,
-        list[dict[str, Any]]
-    ] = field(
-        default_factory=dict
-    )
-
+    open_ports: list[int] = field(default_factory=list)
+    services: dict[int, dict[str, Any]] = field(default_factory=dict)
+    banners: dict[int, str | None] = field(default_factory=dict)
+    http: dict[int, dict[str, Any]] = field(default_factory=dict)
+    technologies: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    dns: dict[str, Any] = field(default_factory=dict)
+    subdomains: list[str] = field(default_factory=list)
+    web: dict[int, dict[str, Any]] = field(default_factory=dict)
+    security: dict[int, dict[str, Any]] = field(default_factory=dict)
+    web_paths: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    robots: dict[int, dict[str, Any]] = field(default_factory=dict)
     workers: int = 100
-
     timeout: float = 1.0
-
     duration_seconds: float = 0.0
-
     profile: str | None = None
 
     @classmethod
@@ -76,9 +37,7 @@ class ScanResult:
     ) -> "ScanResult":
         return cls(
             target=target,
-            timestamp=datetime.now(
-                timezone.utc
-            ).isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             ports_scanned=ports_scanned,
             workers=workers,
             timeout=timeout,
@@ -92,33 +51,24 @@ class ScanResult:
     @property
     def technology_count(self) -> int:
         return sum(
-            len(technologies)
-            for technologies
-            in self.technologies.values()
+            len(items)
+            for items in self.technologies.values()
         )
 
     @property
     def dns_record_count(self) -> int:
         count = 0
 
-        for record_type, values in self.dns.items():
-
-            if record_type == "ptr":
-                if isinstance(values, dict):
-                    count += sum(
-                        len(records)
-                        if isinstance(records, list)
-                        else 1
-                        for records
-                        in values.values()
-                    )
-
-                continue
-
-            if isinstance(values, list):
-                count += len(values)
-
-            elif values:
+        for value in self.dns.values():
+            if isinstance(value, list):
+                count += len(value)
+            elif isinstance(value, dict):
+                for nested in value.values():
+                    if isinstance(nested, list):
+                        count += len(nested)
+                    else:
+                        count += 1
+            elif value is not None:
                 count += 1
 
         return count
@@ -132,55 +82,116 @@ class ScanResult:
         return len(self.web)
 
     @property
-    def robots_count(self) -> int:
-        return sum(
-            1
-            for result in self.robots.values()
-            if (
-                isinstance(result, dict)
-                and result.get("exists")
-            )
-        )
+    def web_path_count(self) -> int:
+        """Return the total number of discovered web paths."""
+        total = 0
+
+        for paths in self.web_paths.values():
+            if isinstance(paths, list):
+                total += len(paths)
+
+        return total
 
     @property
-    def web_path_count(self) -> int:
-        return sum(
-            len(paths)
-            for paths in self.web_paths.values()
-        )
+    def security_observation_count(self) -> int:
+        total = 0
+
+        for details in self.security.values():
+            observations = details.get("observations", [])
+
+            if isinstance(observations, list):
+                total += len(observations)
+
+        return total
+
+    @property
+    def security_high_count(self) -> int:
+        count = 0
+
+        for details in self.security.values():
+            for observation in details.get("observations", []):
+                if observation.get("severity") == "high":
+                    count += 1
+
+        return count
+
+    @property
+    def security_medium_count(self) -> int:
+        count = 0
+
+        for details in self.security.values():
+            for observation in details.get("observations", []):
+                if observation.get("severity") == "medium":
+                    count += 1
+
+        return count
+
+    @property
+    def security_low_count(self) -> int:
+        count = 0
+
+        for details in self.security.values():
+            for observation in details.get("observations", []):
+                if observation.get("severity") == "low":
+                    count += 1
+
+        return count
 
     def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-
-        data["open_port_count"] = (
-            self.open_port_count
-        )
-
-        data["technology_count"] = (
-            self.technology_count
-        )
-
-        data["dns_record_count"] = (
-            self.dns_record_count
-        )
-
-        data["subdomain_count"] = (
-            self.subdomain_count
-        )
-
-        data["web_count"] = (
-            self.web_count
-        )
-
-        data["robots_count"] = (
-            self.robots_count
-        )
-
-        data["web_path_count"] = (
-            self.web_path_count
-        )
-
-        return data
+        return {
+            "target": self.target,
+            "timestamp": self.timestamp,
+            "ports_scanned": self.ports_scanned,
+            "open_ports": self.open_ports,
+            "services": {
+                str(port): value
+                for port, value in self.services.items()
+            },
+            "banners": {
+                str(port): value
+                for port, value in self.banners.items()
+            },
+            "http": {
+                str(port): value
+                for port, value in self.http.items()
+            },
+            "technologies": {
+                str(port): value
+                for port, value in self.technologies.items()
+            },
+            "dns": self.dns,
+            "subdomains": self.subdomains,
+            "web": {
+                str(port): value
+                for port, value in self.web.items()
+            },
+            "security": {
+                str(port): value
+                for port, value in self.security.items()
+            },
+            "web_paths": {
+                str(port): value
+                for port, value in self.web_paths.items()
+            },
+            "robots": {
+                str(port): value
+                for port, value in self.robots.items()
+            },
+            "workers": self.workers,
+            "timeout": self.timeout,
+            "duration_seconds": self.duration_seconds,
+            "profile": self.profile,
+            "open_port_count": self.open_port_count,
+            "technology_count": self.technology_count,
+            "dns_record_count": self.dns_record_count,
+            "subdomain_count": self.subdomain_count,
+            "web_count": self.web_count,
+            "web_path_count": self.web_path_count,
+            "security_observation_count": self.security_observation_count,
+            "security_high_count": self.security_high_count,
+            "security_medium_count": self.security_medium_count,
+            "security_low_count": self.security_low_count,
+        }
 
     def to_report(self) -> dict[str, Any]:
         return {
@@ -189,7 +200,7 @@ class ScanResult:
 
     def __repr__(self) -> str:
         return (
-            "ScanResult("
+            f"ScanResult("
             f"target={self.target!r}, "
             f"timestamp={self.timestamp!r}, "
             f"ports_scanned={self.ports_scanned}, "
@@ -201,11 +212,12 @@ class ScanResult:
             f"dns={self.dns!r}, "
             f"subdomains={self.subdomains!r}, "
             f"web={self.web!r}, "
-            f"robots={self.robots!r}, "
+            f"security={self.security!r}, "
             f"web_paths={self.web_paths!r}, "
+            f"robots={self.robots!r}, "
             f"workers={self.workers}, "
             f"timeout={self.timeout}, "
             f"duration_seconds={self.duration_seconds}, "
             f"profile={self.profile!r}"
-            ")"
+            f")"
         )

@@ -987,6 +987,135 @@ tr:last-child td {
         )
 
     # ---------------------------------------------------------
+    # Security Findings
+    # ---------------------------------------------------------
+
+    html_parts.append(
+        f"""
+<div class="section">
+
+<h2>Security Findings</h2>
+
+<div class="stats">
+
+    <div class="stat">
+        <div class="stat-value">
+            {result.security_observation_count}
+        </div>
+        <div class="stat-label">
+            Total Findings
+        </div>
+    </div>
+
+    <div class="stat">
+        <div class="stat-value">
+            {result.security_high_count}
+        </div>
+        <div class="stat-label">
+            High
+        </div>
+    </div>
+
+    <div class="stat">
+        <div class="stat-value">
+            {result.security_medium_count}
+        </div>
+        <div class="stat-label">
+            Medium
+        </div>
+    </div>
+
+    <div class="stat">
+        <div class="stat-value">
+            {result.security_low_count}
+        </div>
+        <div class="stat-label">
+            Low
+        </div>
+    </div>
+
+</div>
+"""
+    )
+
+    if result.security:
+        html_parts.append(
+            """
+<table>
+
+<thead>
+<tr>
+    <th>Port</th>
+    <th>Severity</th>
+    <th>Title</th>
+    <th>Description</th>
+    <th>Evidence</th>
+</tr>
+</thead>
+
+<tbody>
+"""
+        )
+
+        for port, details in sorted(result.security.items()):
+            observations = details.get("observations", [])
+
+            if not isinstance(observations, list):
+                continue
+
+            for observation in observations:
+                severity = str(
+                    observation.get("severity", "unknown")
+                ).lower()
+
+                html_parts.append(
+                    f"""
+<tr>
+
+<td>{_escape(port)}</td>
+
+<td>
+    <strong>{_escape(severity.upper())}</strong>
+</td>
+
+<td>
+    {_escape(observation.get("title", "Unknown"))}
+</td>
+
+<td>
+    {_escape(observation.get("description", "Unknown"))}
+</td>
+
+<td>
+    {_escape(observation.get("evidence", "Unknown"))}
+</td>
+
+</tr>
+"""
+                )
+
+        html_parts.append(
+            """
+</tbody>
+</table>
+"""
+        )
+    else:
+        html_parts.append(
+            """
+<div class="empty">
+    No security observations recorded.
+</div>
+"""
+        )
+
+    html_parts.append(
+        """
+</div>
+"""
+    )
+
+    # ---------------------------------------------------------
     # Robots.txt
     # ---------------------------------------------------------
 

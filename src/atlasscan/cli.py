@@ -22,6 +22,7 @@ from src.atlasscan.http import inspect_http
 from src.atlasscan.models import ScanResult
 from src.atlasscan.report import generate_html_report
 from src.atlasscan.scanner import scan_port
+from src.atlasscan.security import analyze_security_headers
 from src.atlasscan.service import identify_service
 from src.atlasscan.subdomain import discover_subdomains
 from src.atlasscan.technology import fingerprint_technology
@@ -368,6 +369,34 @@ def collect_web_paths(
     return dict(sorted(results.items()))
 
 
+def collect_security_details(
+    web_data: dict[int, dict],
+) -> dict[int, dict]:
+    """Analyze HTTP security headers for each inspected web service."""
+    if not web_data:
+        return {}
+
+    results: dict[int, dict] = {}
+
+    for port, details in web_data.items():
+        headers = details.get("headers", {})
+
+        try:
+            results[port] = analyze_security_headers(headers)
+        except Exception as exc:
+            results[port] = {
+                "headers": {},
+                "present_count": 0,
+                "missing_count": 0,
+                "total_count": 0,
+                "missing": [],
+                "observations": [],
+                "error": str(exc),
+            }
+
+    return dict(sorted(results.items()))
+
+
 def save_json_report(
     filename: str,
     result: ScanResult,
@@ -561,6 +590,56 @@ def display_security_headers(
                     header,
                     str(value),
                 )
+
+    if found:
+        console.print()
+        console.print(table)
+
+
+def display_security_findings(
+    security_data: dict[int, dict],
+):
+    """Display security-header observations in the terminal."""
+    if not security_data:
+        return
+
+    table = Table(
+        title="Security Findings"
+    )
+
+    table.add_column("Port", justify="center")
+    table.add_column("Severity", justify="center")
+    table.add_column("Finding")
+    table.add_column("Evidence")
+
+    found = False
+
+    severity_styles = {
+        "high": "[red]HIGH[/red]",
+        "medium": "[yellow]MEDIUM[/yellow]",
+        "low": "[cyan]LOW[/cyan]",
+    }
+
+    for port, details in security_data.items():
+        observations = details.get("observations", [])
+
+        for observation in observations:
+            found = True
+            severity = str(
+                observation.get("severity", "unknown")
+            ).lower()
+
+            severity_text = severity_styles.get(
+                severity,
+                severity.upper(),
+            )
+
+            table.add_row(
+                str(port),
+                severity_text,
+                str(observation.get("title") or "Unknown"),
+                str(observation.get("evidence") or "Unknown"),
+            )
 
     if found:
         console.print()
@@ -853,6 +932,13 @@ def main():
     )
 
     # ---------------------------------------------------------
+    # Security analysis
+    # ---------------------------------------------------------
+    security_details = collect_security_details(
+        web_details
+    )
+
+    # ---------------------------------------------------------
     # robots.txt
     # ---------------------------------------------------------
     robots_details = collect_robots_details(
@@ -895,6 +981,7 @@ def main():
     result.web = web_details
     result.robots = robots_details
     result.web_paths = web_paths
+    result.security = security_details
 
     result.duration_seconds = elapsed
 
@@ -1047,6 +1134,13 @@ def main():
     # ---------------------------------------------------------
     display_security_headers(
         result.web
+    )
+
+    # ---------------------------------------------------------
+    # Security findings
+    # ---------------------------------------------------------
+    display_security_findings(
+        result.security
     )
 
     # ---------------------------------------------------------

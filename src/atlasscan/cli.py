@@ -27,7 +27,7 @@ from src.atlasscan.security import analyze_security_headers
 from src.atlasscan.service import identify_service
 from src.atlasscan.subdomain import discover_subdomains
 from src.atlasscan.technology import fingerprint_technology
-from src.atlasscan.utils import parse_ports
+from src.atlasscan.utils import parse_ports, validate_target
 from src.atlasscan.vulnerability import find_vulnerabilities
 from src.atlasscan.webchecks import analyze_web_checks
 from src.atlasscan.web import (
@@ -1007,6 +1007,11 @@ def main():
     )
 
     args = parser.parse_args()
+
+    try:
+        target = validate_target(args.target)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     profile = None
 

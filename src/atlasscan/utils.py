@@ -1,3 +1,6 @@
+import ipaddress
+import re
+
 def parse_ports(port_string: str) -> list[int]:
     """
     Parse and validate port input.
@@ -90,3 +93,44 @@ def parse_ports(port_string: str) -> list[int]:
         )
 
     return sorted(ports)
+
+
+def validate_target(target: str) -> str:
+    """
+    Validate and normalize an IP address or hostname.
+
+    Raises:
+        ValueError: If the target is invalid.
+    """
+    if not isinstance(target, str):
+        raise ValueError("Target must be a string")
+
+    target = target.strip()
+
+    if not target:
+        raise ValueError("Target cannot be empty")
+
+    try:
+        ipaddress.ip_address(target)
+        return target
+    except ValueError:
+        pass
+
+    if len(target) > 253:
+        raise ValueError("Target hostname is too long")
+
+    hostname = target.rstrip(".")
+
+    hostname_pattern = re.compile(
+        r"^(?=.{1,253}$)"
+        r"(?:[A-Za-z0-9]"
+        r"(?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+        r"\.)*"
+        r"[A-Za-z0-9]"
+        r"(?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
+    )
+
+    if not hostname_pattern.fullmatch(hostname):
+        raise ValueError(f"Invalid target: '{target}'")
+
+    return target

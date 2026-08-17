@@ -335,6 +335,9 @@ def _detect_html(
         "__reactfiber",
         "data-reactroot",
         "react-dom",
+        "react.production",
+        "react.development",
+        "react.min.js",
     )
 
     if any(

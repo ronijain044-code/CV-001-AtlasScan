@@ -80,7 +80,7 @@ def get_profile(name: str) -> ScanProfile:
     Return a configured scan profile by name.
     """
 
-    profile = PROFILES.get(name.lower())
+    profile = PROFILES.get(name.strip().lower())
 
     if profile is None:
         available = ", ".join(sorted(PROFILES))

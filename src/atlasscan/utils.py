@@ -116,6 +116,13 @@ def validate_target(target: str) -> str:
     except ValueError:
         pass
 
+    # Reject malformed IPv4-looking targets instead of treating
+    # them as hostnames, e.g. 999.999.999.999 or 192.168.1.
+    if re.fullmatch(r"\d+(?:\.\d+)+", target):
+        raise ValueError(
+            f"Invalid IP address: '{target}'"
+        )
+
     if len(target) > 253:
         raise ValueError("Target hostname is too long")
 
